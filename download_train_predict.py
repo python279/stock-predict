@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import date, timedelta, datetime
 
 import matplotlib.pyplot as plt
+import mxnet
 import pandas as pd
 import requests
 from gluonts.dataset import common
@@ -86,7 +87,10 @@ def download_train_predict(*args):
             ], freq='1d')
 
         # now training the model
-        estimator = deepar.DeepAREstimator(freq='1d', prediction_length=20, trainer=Trainer(ctx='gpu', epochs=100))
+        if mxnet.gpu():
+            estimator = deepar.DeepAREstimator(freq='1d', prediction_length=20, trainer=Trainer(ctx='gpu', epochs=100))
+        else:
+            estimator = deepar.DeepAREstimator(freq='1d', prediction_length=20, trainer=Trainer(epochs=100))
         predictor = estimator.train(training_data=data)
 
         # predict the future data
@@ -126,5 +130,5 @@ if __name__ == "__main__":
     predict_path = os.path.join(end_date, "predict")
     os.makedirs(predict_path, exist_ok=True)
 
-    with ThreadPoolExecutor(max_workers=10) as tpe:
+    with ThreadPoolExecutor(max_workers=50) as tpe:
         tpe.map(download_train_predict, [(code, start_date, end_date, data_path, predict_path) for code in all_code])
