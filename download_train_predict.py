@@ -2,6 +2,7 @@
 # coding: utf-8
 
 import os
+import sys
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, timedelta, datetime
 
@@ -98,19 +99,21 @@ def download_train_predict(*args):
         predict_list = list(predict)
         max, min, max_id, min_id = predict_list[0].samples.max(), predict_list[0].samples.min(), predict_list[
             0].samples.argmax(), predict_list[0].samples.argmin()
+        plt.rcParams.update({'font.size': 40})
+        fig = plt.figure(figsize=(60, 20))
+        ax, bx = fig.subplots(1, 2, sharey=True)
+        ax.set_title(code, fontsize=40)
+        ax.plot(train_data.index[-20:], train_data.TCLOSE[-20:], 'g')
+        bx.set_title(code + "-predict", fontsize=40)
+        predict_x = [(predict_list[0].start_date + timedelta(days=i)).__format__('%Y-%m-%d') for i in
+                     range(1, 20 + 1)]
+        predict_y = predict_list[0].samples[0]
+        bx.plot(predict_x, predict_y, 'r')
+        bx.set_xticks(predict_x)
         if min_id < max_id and (max - min) / min >= 0.2:
-            plt.rcParams.update({'font.size': 40})
-            fig = plt.figure(figsize=(60, 20))
-            ax, bx = fig.subplots(1, 2, sharey=True)
-            ax.set_title(code, fontsize=40)
-            ax.plot(train_data.index[-20:], train_data.TCLOSE[-20:], 'g')
-            bx.set_title(code + "-predict", fontsize=40)
-            predict_x = [(predict_list[0].start_date + timedelta(days=i)).__format__('%Y-%m-%d') for i in
-                         range(1, 20 + 1)]
-            predict_y = predict_list[0].samples[0]
-            bx.plot(predict_x, predict_y, 'r')
-            bx.set_xticks(predict_x)
-            fig.savefig(os.path.join(predict_path, '{code}.jpeg'.format(code=code)))
+            fig.savefig(os.path.join(predict_path, 'red_{code}.jpeg'.format(code=code)))
+        else:
+            fig.savefig(os.path.join(predict_path, 'green_{code}.jpeg'.format(code=code)))
         return True
 
     # function body
@@ -120,9 +123,13 @@ def download_train_predict(*args):
 
 
 if __name__ == "__main__":
-    all_code_url = "http://44.push2.eastmoney.com/api/qt/clist/get?pn=1&pz=10000&po=1&np=1&ut=bd1d9ddb04089700cf9c27f6f7426281&fltt=2&invt=2&fid=f3&fs=m:0+t:6,m:0+t:13,m:0+t:80,m:1+t:2,m:1+t:23&fields=f12&_=1579615221139"
-    r = requests.get(all_code_url, timeout=5).json()
-    all_code = [data['f12'] for data in r['data']['diff']]
+    # pass the code from cmdline or get from web
+    if len(sys.argv) > 1:
+        all_code = sys.argv[1:]
+    else:
+        all_code_url = "http://44.push2.eastmoney.com/api/qt/clist/get?pn=1&pz=10000&po=1&np=1&ut=bd1d9ddb04089700cf9c27f6f7426281&fltt=2&invt=2&fid=f3&fs=m:0+t:6,m:0+t:13,m:0+t:80,m:1+t:2,m:1+t:23&fields=f12&_=1579615221139"
+        r = requests.get(all_code_url, timeout=5).json()
+        all_code = [data['f12'] for data in r['data']['diff']]
     start_date = (date.today() - timedelta(days=720)).strftime("%Y%m%d")
     end_date = date.today().strftime("%Y%m%d")
     data_path = os.path.join(end_date, "data")
