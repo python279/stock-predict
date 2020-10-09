@@ -13,6 +13,7 @@ import requests
 from gluonts.dataset import common
 from gluonts.model import deepar
 from gluonts.trainer import Trainer
+import gc
 
 
 def download_train_predict(*args):
@@ -118,8 +119,9 @@ def download_train_predict(*args):
 
     # function body
     code, start_date, end_date, data_path, predict_path = args[0]
-    return download_code_data(code, start_date, end_date, data_path) and train_and_predict(code, data_path,
-                                                                                           predict_path)
+    ret = download_code_data(code, start_date, end_date, data_path) and train_and_predict(code, data_path, predict_path)
+    gc.collect()
+    return ret
 
 
 if __name__ == "__main__":
@@ -137,5 +139,5 @@ if __name__ == "__main__":
     predict_path = os.path.join(end_date, "predict")
     os.makedirs(predict_path, exist_ok=True)
 
-    with ThreadPoolExecutor(max_workers=50) as tpe:
+    with ThreadPoolExecutor(max_workers=10) as tpe:
         tpe.map(download_train_predict, [(code, start_date, end_date, data_path, predict_path) for code in all_code])
