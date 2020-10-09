@@ -89,7 +89,7 @@ def download_train_predict(*args):
             ], freq='1d')
 
         # now training the model
-        if mxnet.gpu():
+        if len(mxnet.test_utils.list_gpus()):
             estimator = deepar.DeepAREstimator(freq='1d', prediction_length=20, trainer=Trainer(ctx='gpu', epochs=100))
         else:
             estimator = deepar.DeepAREstimator(freq='1d', prediction_length=20, trainer=Trainer(epochs=100))
@@ -128,10 +128,12 @@ if __name__ == "__main__":
     # pass the code from cmdline or get from web
     if len(sys.argv) > 1:
         all_code = sys.argv[1:]
+        print(all_code)
     else:
         all_code_url = "http://44.push2.eastmoney.com/api/qt/clist/get?pn=1&pz=10000&po=1&np=1&ut=bd1d9ddb04089700cf9c27f6f7426281&fltt=2&invt=2&fid=f3&fs=m:0+t:6,m:0+t:13,m:0+t:80,m:1+t:2,m:1+t:23&fields=f12&_=1579615221139"
         r = requests.get(all_code_url, timeout=5).json()
         all_code = [data['f12'] for data in r['data']['diff']]
+        print(all_code)
     start_date = (date.today() - timedelta(days=720)).strftime("%Y%m%d")
     end_date = date.today().strftime("%Y%m%d")
     data_path = os.path.join(end_date, "data")
