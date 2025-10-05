@@ -1,0 +1,95 @@
+# 全球新闻抓取和分析系统配置文件示例
+# 复制此文件为 config.yaml 并填入你的配置
+
+# Gmail配置
+email:
+  smtp_server: "smtp.gmail.com"
+  smtp_port: 587
+  sender_email: "your-email@gmail.com"  # 请修改为你的Gmail地址
+  sender_password: "your-app-password"  # 请使用Gmail应用专用密码，不是登录密码
+  recipient_email: "your-email@gmail.com"  # 接收邮件的地址
+
+# 大模型配置 (支持OpenAI和Anthropic)
+llm:
+  provider: "openai"  # 可选: openai, anthropic, openai-compatible
+  api_key: "your-api-key-here"  # 请填入你的API Key
+  model: "gpt-4o"  # OpenAI: gpt-4o, gpt-4-turbo; Anthropic: claude-3-5-sonnet-20241022
+  base_url: ""  # OpenAI兼容接口的base_url，如使用OpenAI官方可留空
+  max_tokens: 4000
+  temperature: 0.7
+
+# News API配置
+news_api:
+  enabled: true
+  api_key: "your-newsapi-key"  # 从 https://newsapi.org 获取
+  countries: ["us", "gb", "de", "fr", "ru", "sg", "th", "id", "jp", "in"]
+  categories: ["business", "technology", "general"]
+  page_size: 10
+  max_articles_per_country: 5
+
+# RSS Feed配置
+rss_feeds:
+  enabled: true
+  sources:
+    # 全球综合
+    - name: "Reuters"
+      url: "https://www.reutersagency.com/feed/?taxonomy=best-topics&post_type=best"
+      region: "global"
+      priority: 5
+    - name: "BBC News"
+      url: "http://feeds.bbci.co.uk/news/world/rss.xml"
+      region: "global"
+      priority: 5
+    # 更多源请参考 config.yaml
+
+# 新闻抓取配置
+fetcher:
+  max_articles: 50
+  fetch_interval_hours: 24
+  timeout_seconds: 30
+  retry_attempts: 3
+  retry_delay_seconds: 5
+  user_agent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
+
+# 内容过滤配置
+content_filter:
+  min_content_length: 100
+  exclude_keywords:
+    - "horoscope"
+    - "celebrity gossip"
+  include_keywords:
+    - "economy"
+    - "market"
+    - "trade"
+
+# 分析配置
+analysis:
+  focus_areas:
+    - "全球经济趋势"
+    - "地缘政治风险"
+    - "股市影响因素"
+  output_language: "zh-CN"
+  include_predictions: true
+  prediction_timeframe: "未来1-3个月"
+
+# 日志配置
+logging:
+  level: "INFO"
+  file: "logs/news_analyzer.log"
+  max_file_size_mb: 10
+  backup_count: 5
+  console_output: true
+
+# 调度配置
+scheduler:
+  enabled: true
+  run_time: "08:00"
+  timezone: "Asia/Shanghai"
+
+# 数据存储配置
+storage:
+  save_raw_news: true
+  news_cache_dir: "data/news_cache"
+  reports_dir: "data/reports"
+  max_cache_days: 7
+

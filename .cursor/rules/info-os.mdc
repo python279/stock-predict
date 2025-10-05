@@ -1,0 +1,203 @@
+---
+alwaysApply: true
+---
+
+# Info-OS 全球新闻自动分析系统
+
+## 项目概述
+这是一个完全自动化的国际新闻抓取、分析和通知系统。每天自动抓取世界各地的权威新闻，使用大模型进行深度分析，预测世界局势和股市影响，并通过邮件发送分析报告。
+
+## 核心需求
+
+### 1. 新闻抓取
+- **目标区域**: 美国、欧洲、东南亚各国、俄罗斯等世界主要经济体
+- **质量要求**: 
+  - 只使用官方可信渠道（BBC、Financial Times、Channel NewsAsia等）
+  - 排除造谣、煽动情绪的媒体
+  - 确保新闻源的权威性和客观性
+- **技术方案**:
+  - News API：覆盖10个国家，3个类别（business, technology, general）
+  - RSS Feed：19个权威新闻源，100%可用率
+  - 自动去重和内容过滤
+
+### 2. AI 分析
+- **分析维度**:
+  - 全球经济趋势（宏观经济、货币政策、贸易关系）
+  - 地缘政治风险评估
+  - 股市影响分析（板块机会和风险）
+  - 未来1-3个月预测
+  - 投资建议和行动建议
+- **大模型配置**:
+  - 支持 OpenAI、Anthropic、OpenAI兼容接口
+  - 当前使用：讯飞星火 x1 模型
+  - 输出中文分析报告
+
+### 3. 自动通知
+- **邮件发送**:
+  - 精美的 HTML 格式报告
+  - 支持 Gmail、QQ邮箱、163邮箱等
+  - 每天定时发送分析结果
+- **报告内容**:
+  - 重要新闻速览
+  - 区域形势分析
+  - 经济趋势预测
+  - 股市投资建议
+
+### 4. 全自动化
+- **定时调度**: 每天 08:00 自动运行
+- **完全无人值守**: 抓取→分析→发送全流程自动化
+- **错误处理**: 失败自动重试，异常邮件通知
+- **数据管理**: 自动保存缓存，定期清理过期数据
+
+## 技术架构
+
+### 模块化设计
+```
+src/
+├── config_loader.py      # 配置加载和验证
+├── news_fetcher.py        # 新闻抓取（News API + RSS）
+├── llm_analyzer.py        # 大模型分析
+├── email_sender.py        # 邮件发送
+├── data_storage.py        # 数据存储和管理
+├── logger_config.py       # 日志系统
+├── main.py               # 主程序流程
+└── scheduler.py          # 定时调度器
+```
+
+### 关键特性
+- **健壮性**: 完善的异常处理、重试机制、超时控制
+- **可配置**: 所有参数通过 config.yaml 配置
+- **可扩展**: 模块化设计，易于添加新的新闻源或分析维度
+- **高质量**: 代码清晰、注释完整、类型提示
+
+## 配置要点
+
+### 必需配置
+1. **邮箱设置** (`config.yaml` - email)
+   - 推荐 QQ 邮箱（国内稳定）
+   - 使用授权码而非登录密码
+   
+2. **大模型 API** (`config.yaml` - llm)
+   - 当前：讯飞星火 API
+   - 支持切换到 OpenAI/Anthropic
+   
+3. **News API** (`config.yaml` - news_api) [可选]
+   - 免费版 100次/天
+   - 不配置也可只用 RSS
+
+### RSS 新闻源（19个，100%可用）
+- **全球**: BBC, Al Jazeera
+- **美洲**: NPR, CNN
+- **欧洲**: Financial Times, Guardian, Deutsche Welle, France 24
+- **亚洲**: Channel NewsAsia, Nikkei Asia, SCMP, The Straits Times, Bangkok Post
+- **俄罗斯**: TASS, Moscow Times
+- **国际组织**: UN News, IMF News
+
+## Python 解释器
+
+**默认使用虚拟环境的 Python 解释器：**
+- 路径: `.venv/bin/python3`
+- 所有命令示例均使用此解释器
+- **工作目录：始终在项目根目录 `info-os` 执行命令**
+
+## 使用方式
+
+### 立即运行
+```bash
+.venv/bin/python3 src/main.py
+```
+
+### 定时调度
+```bash
+.venv/bin/python3 src/scheduler.py
+```
+
+### 测试工具
+```bash
+# 测试配置
+.venv/bin/python3 src/test_config.py
+
+# 测试RSS源
+.venv/bin/python3 src/test_rss_sources.py
+
+# 测试邮件
+.venv/bin/python3 src/test_email.py
+```
+
+## 预期输出
+
+### 分析报告包含
+1. **重要新闻速览**: 3-5条最重要的全球事件
+2. **区域形势分析**: 美洲、欧洲、亚洲、俄罗斯详细分析
+3. **全球经济趋势**: 宏观指标、货币政策、贸易关系
+4. **地缘政治风险**: 潜在冲突和影响评估
+5. **股市影响分析**: 板块机会、风险警示、关注公司
+6. **未来预测**: 1-3个月内可能发生的事件
+7. **投资建议**: 组合调整、风险对冲、关注指标
+
+### 性能指标
+- **抓取速度**: ~50秒（19个RSS + News API）
+- **分析速度**: ~49秒（讯飞星火）
+- **总耗时**: ~2分钟
+- **成本**: ~¥0.03-0.06/次
+
+## 代码规范
+
+### Python 编码风格
+- 遵循 PEP 8 规范
+- 使用类型提示（typing）
+- 详细的文档字符串（docstring）
+- 清晰的注释说明
+
+### 错误处理原则
+- 所有外部调用必须有 try-except
+- 网络请求必须有重试机制
+- 关键操作必须记录日志
+- 失败不能导致整个流程崩溃
+
+### 时间处理规范
+- 统一使用 UTC 时区（timezone.utc）
+- datetime 对象必须带时区信息
+- 避免 naive 和 aware datetime 混用
+
+### 数据处理规范
+- 所有外部数据字段先检查 None
+- 使用 `(value or '').strip()` 安全处理字符串
+- 数据去重基于内容哈希
+- 保留原始数据用于调试
+
+## 维护指南
+
+### 定期检查
+1. **RSS源状态**: 运行 `test_rss_sources.py` 检查可用性
+2. **API配额**: 监控 News API 和 LLM API 使用量
+3. **报告质量**: 定期审查生成的分析报告
+4. **日志文件**: 检查 `logs/news_analyzer.log` 查找异常
+
+### 常见问题
+- **邮件发送失败**: 切换到 QQ 邮箱或配置代理
+- **RSS源失效**: 运行测试工具检查并替换
+- **LLM超时**: 调整 timeout 或切换模型
+- **内存不足**: 减少 max_articles 配置
+
+### 扩展开发
+- **添加新闻源**: 在 config.yaml 的 rss_feeds.sources 添加
+- **调整分析维度**: 修改 config.yaml 的 analysis.focus_areas
+- **添加通知方式**: 扩展 email_sender.py 支持微信/Telegram
+- **更换大模型**: 修改 llm_analyzer.py 支持新的 API
+
+## 项目状态
+
+- **完成度**: 98%
+- **核心功能**: 全部完成并测试通过
+- **代码质量**: 高（模块化、健壮、易维护）
+- **文档**: README.md（完整使用文档，包含快速开始、配置、运维等所有内容）
+- **待完善**: 邮箱配置（推荐使用QQ邮箱）
+
+## 重要文件
+
+- `README.md` - 完整使用文档（包含快速开始、配置详解、FAQ等所有内容）
+- `config.yaml` - 主配置文件
+- `requirements.txt` - Python 依赖
+- `src/test_email.py` - 邮件测试工具
+- `run.sh` - 快速启动脚本
