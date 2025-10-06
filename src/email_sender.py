@@ -33,7 +33,21 @@ class EmailSender:
         self.smtp_port = self.email_config.get('smtp_port', 587)
         self.sender_email = self.email_config.get('sender_email', '')
         self.sender_password = self.email_config.get('sender_password', '')
-        self.recipient_email = self.email_config.get('recipient_email', '')
+        
+        # 支持多个收件人（向后兼容）
+        recipient_emails = self.email_config.get('recipient_emails', [])
+        recipient_email = self.email_config.get('recipient_email', '')
+        
+        if recipient_emails:
+            # 使用新的 recipient_emails 列表
+            self.recipient_emails = recipient_emails
+        elif recipient_email:
+            # 向后兼容：将单个邮箱转换为列表
+            self.recipient_emails = [recipient_email]
+        else:
+            self.recipient_emails = []
+        
+        logger.info(f"邮件发送器初始化完成，收件人数量: {len(self.recipient_emails)}")
     
     def send_analysis_report(
         self,
@@ -84,7 +98,7 @@ class EmailSender:
         attachments: Optional[List[str]] = None
     ) -> bool:
         """
-        发送邮件
+        发送邮件（支持多个收件人）
         
         Args:
             subject: 邮件主题
@@ -95,11 +109,15 @@ class EmailSender:
         Returns:
             是否发送成功
         """
+        if not self.recipient_emails:
+            logger.error("没有配置收件人邮箱")
+            return False
+        
         try:
             # 创建邮件对象
             msg = MIMEMultipart('alternative')
             msg['From'] = self.sender_email
-            msg['To'] = self.recipient_email
+            msg['To'] = ', '.join(self.recipient_emails)  # 支持多个收件人
             msg['Subject'] = subject
             
             # 添加纯文本内容
@@ -121,9 +139,10 @@ class EmailSender:
             with smtplib.SMTP(self.smtp_server, self.smtp_port) as server:
                 server.starttls()  # 启用 TLS
                 server.login(self.sender_email, self.sender_password)
-                server.send_message(msg)
+                # 向所有收件人发送
+                server.send_message(msg, to_addrs=self.recipient_emails)
             
-            logger.info(f"邮件发送成功: {subject}")
+            logger.info(f"邮件发送成功: {subject} -> {', '.join(self.recipient_emails)}")
             return True
         
         except smtplib.SMTPAuthenticationError as e:
@@ -279,6 +298,8 @@ class EmailSender:
             {analysis_html}
         </div>
         
+        {self._build_references_html(analysis_result)}
+        
         <div class="footer">
             <p>本报告由 AI 自动生成，仅供参考，不构成投资建议</p>
             <p>生成时间: {analysis_time}</p>
@@ -349,6 +370,71 @@ class EmailSender:
         
         return '\n'.join(html_lines)
     
+    def _build_references_html(self, analysis_result: Dict[str, Any]) -> str:
+        """
+        构建参考资料的 HTML 内容
+        
+        Args:
+            analysis_result: 分析结果
+        
+        Returns:
+            参考资料的 HTML 字符串
+        """
+        all_articles = analysis_result.get('all_articles', [])
+        if not all_articles:
+            return ""
+        
+        # 按区域分组
+        regions = {}
+        for article in all_articles:
+            region = article.get('region', 'unknown')
+            if region not in regions:
+                regions[region] = []
+            regions[region].append(article)
+        
+        # 区域名称映射
+        region_names = {
+            'americas': '美洲地区',
+            'europe': '欧洲地区',
+            'asia': '亚洲地区',
+            'russia': '俄罗斯及独联体',
+            'global': '全球综合',
+            'unknown': '其他'
+        }
+        
+        html_parts = [
+            '<div class="references" style="margin-top: 40px; padding-top: 30px; border-top: 2px solid #e0e0e0;">',
+            '<h2 style="color: #1976D2;">📚 参考资料</h2>',
+            f'<p style="color: #666; margin-bottom: 20px;">本报告基于以下 {len(all_articles)} 篇新闻进行分析：</p>'
+        ]
+        
+        for region in sorted(regions.keys()):
+            articles = regions[region]
+            region_name = region_names.get(region, region)
+            
+            html_parts.append(f'<h3 style="color: #424242; margin-top: 25px; margin-bottom: 15px;">🌐 {region_name}</h3>')
+            html_parts.append('<ol style="padding-left: 25px;">')
+            
+            for article in articles:
+                title = article.get('title', '无标题')
+                url = article.get('url', '')
+                source = article.get('source', '未知来源')
+                published_at = article.get('published_at', '')
+                
+                html_parts.append('<li style="margin-bottom: 15px;">')
+                html_parts.append(f'<strong style="color: #333;"><a href="{url}" style="color: #2196F3; text-decoration: none;">{title}</a></strong><br>')
+                html_parts.append(f'<span style="color: #666; font-size: 14px;">来源: {source}')
+                if published_at:
+                    html_parts.append(f' | 时间: {published_at}')
+                html_parts.append('</span>')
+                html_parts.append('</li>')
+            
+            html_parts.append('</ol>')
+        
+        html_parts.append('</div>')
+        
+        return '\n'.join(html_parts)
+    
     def _extract_plain_text(self, analysis_result: Dict[str, Any]) -> str:
         """
         提取纯文本内容
@@ -362,6 +448,40 @@ class EmailSender:
         analysis_text = analysis_result.get('analysis', '暂无分析')
         articles_count = analysis_result.get('articles_count', 0)
         regions = ', '.join(analysis_result.get('regions_covered', []))
+        all_articles = analysis_result.get('all_articles', [])
+        
+        # 构建参考资料文本
+        references_text = ""
+        if all_articles:
+            references_text = f"\n\n{'=' * 60}\n\n参考资料\n\n本报告基于以下 {len(all_articles)} 篇新闻进行分析：\n\n"
+            
+            # 按区域分组
+            regions_dict = {}
+            for article in all_articles:
+                region = article.get('region', 'unknown')
+                if region not in regions_dict:
+                    regions_dict[region] = []
+                regions_dict[region].append(article)
+            
+            region_names = {
+                'americas': '美洲地区',
+                'europe': '欧洲地区',
+                'asia': '亚洲地区',
+                'russia': '俄罗斯及独联体',
+                'global': '全球综合',
+                'unknown': '其他'
+            }
+            
+            for region in sorted(regions_dict.keys()):
+                articles_list = regions_dict[region]
+                region_name = region_names.get(region, region)
+                references_text += f"\n{region_name}\n\n"
+                
+                for i, article in enumerate(articles_list, 1):
+                    title = article.get('title', '无标题')
+                    url = article.get('url', '')
+                    source = article.get('source', '未知来源')
+                    references_text += f"{i}. {title}\n   来源: {source}\n   链接: {url}\n\n"
         
         return f"""
 全球新闻分析报告
@@ -374,6 +494,7 @@ class EmailSender:
 
 {analysis_text}
 
+{references_text}
 {'-' * 60}
 
 本报告由 AI 自动生成，仅供参考，不构成投资建议

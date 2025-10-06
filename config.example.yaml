@@ -7,7 +7,11 @@ email:
   smtp_port: 587
   sender_email: "your-email@gmail.com"  # 请修改为你的Gmail地址
   sender_password: "your-app-password"  # 请使用Gmail应用专用密码，不是登录密码
-  recipient_email: "your-email@gmail.com"  # 接收邮件的地址
+  recipient_email: "your-email@gmail.com"  # 接收邮件的地址（保留向后兼容）
+  recipient_emails:  # 支持多个接收邮箱（推荐使用）
+    - "your-email@gmail.com"
+    - "another@example.com"  # 可以添加更多邮箱
+    - "team@company.com"
 
 # 大模型配置 (支持OpenAI和Anthropic)
 llm:
@@ -25,56 +29,150 @@ news_api:
   countries: ["us", "gb", "de", "fr", "ru", "sg", "th", "id", "jp", "in"]
   categories: ["business", "technology", "general"]
   page_size: 10
-  max_articles_per_country: 5
+  max_articles_per_country: 10
 
 # RSS Feed配置
 rss_feeds:
   enabled: true
   sources:
     # 全球综合
-    - name: "Reuters"
-      url: "https://www.reutersagency.com/feed/?taxonomy=best-topics&post_type=best"
-      region: "global"
-      priority: 5
-    - name: "BBC News"
+    - name: "BBC World News"
       url: "http://feeds.bbci.co.uk/news/world/rss.xml"
       region: "global"
       priority: 5
-    # 更多源请参考 config.yaml
+    - name: "BBC Business"
+      url: "http://feeds.bbci.co.uk/news/business/rss.xml"
+      region: "global"
+      priority: 5
+    - name: "Al Jazeera"
+      url: "https://www.aljazeera.com/xml/rss/all.xml"
+      region: "global"
+      priority: 5
+    
+    # 美国
+    - name: "NPR News"
+      url: "https://feeds.npr.org/1001/rss.xml"
+      region: "americas"
+      priority: 5
+    - name: "CNN Top Stories"
+      url: "http://rss.cnn.com/rss/cnn_topstories.rss"
+      region: "americas"
+      priority: 4
+    - name: "CNN World"
+      url: "http://rss.cnn.com/rss/cnn_world.rss"
+      region: "americas"
+      priority: 4
+    
+    # 欧洲
+    - name: "Financial Times"
+      url: "https://www.ft.com/?format=rss"
+      region: "europe"
+      priority: 5
+    - name: "Deutsche Welle"
+      url: "https://rss.dw.com/xml/rss-en-all"
+      region: "europe"
+      priority: 4
+    - name: "France 24"
+      url: "https://www.france24.com/en/rss"
+      region: "europe"
+      priority: 4
+    - name: "The Guardian World"
+      url: "https://www.theguardian.com/world/rss"
+      region: "europe"
+      priority: 5
+    
+    # 亚洲和东南亚
+    - name: "Channel NewsAsia"
+      url: "https://www.channelnewsasia.com/api/v1/rss-outbound-feed?_format=xml"
+      region: "asia"
+      priority: 5
+    - name: "Nikkei Asia"
+      url: "https://asia.nikkei.com/rss/feed/nar"
+      region: "asia"
+      priority: 5
+    - name: "The Straits Times"
+      url: "https://www.straitstimes.com/news/world/rss.xml"
+      region: "asia"
+      priority: 4
+    - name: "Bangkok Post"
+      url: "https://www.bangkokpost.com/rss/data/news.xml"
+      region: "asia"
+      priority: 3
+    - name: "South China Morning Post"
+      url: "https://www.scmp.com/rss/91/feed"
+      region: "asia"
+      priority: 5
+    
+    # 俄罗斯
+    - name: "TASS"
+      url: "https://tass.com/rss/v2.xml"
+      region: "russia"
+      priority: 3
+    - name: "Moscow Times"
+      url: "https://www.themoscowtimes.com/rss/news"
+      region: "russia"
+      priority: 4
+    
+    # 国际组织
+    - name: "UN News"
+      url: "https://news.un.org/feed/subscribe/en/news/all/rss.xml"
+      region: "international"
+      priority: 4
+    - name: "IMF News"
+      url: "https://www.imf.org/en/News/rss"
+      region: "international"
+      priority: 4
 
 # 新闻抓取配置
 fetcher:
-  max_articles: 50
-  fetch_interval_hours: 24
-  timeout_seconds: 30
-  retry_attempts: 3
-  retry_delay_seconds: 5
+  max_articles: 50  # 每次抓取的最大文章数
+  fetch_interval_hours: 24  # 抓取间隔（小时）
+  timeout_seconds: 30  # 请求超时时间
+  retry_attempts: 3  # 失败重试次数
+  retry_delay_seconds: 5  # 重试延迟
   user_agent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
 
 # 内容过滤配置
 content_filter:
-  min_content_length: 100
-  exclude_keywords:
+  min_content_length: 100  # 最小内容长度
+  exclude_keywords:  # 排除包含这些关键词的文章
     - "horoscope"
     - "celebrity gossip"
-  include_keywords:
+    - "entertainment"
+    - "sports"
+  include_keywords:  # 优先包含这些关键词的文章
     - "economy"
     - "market"
     - "trade"
+    - "gdp"
+    - "inflation"
+    - "policy"
+    - "geopolitical"
+    - "sanctions"
+    - "investment"
+    - "stock"
+    - "AI"
+    - "IT"
 
 # 分析配置
 analysis:
   focus_areas:
     - "全球经济趋势"
     - "地缘政治风险"
+    - "贸易关系变化"
+    - "货币政策"
     - "股市影响因素"
-  output_language: "zh-CN"
-  include_predictions: true
-  prediction_timeframe: "未来1-3个月"
+    - "大宗商品价格"
+    - "科技发展趋势"
+    - "AI行业发展"
+    - "新能源汽车"
+  output_language: "zh-CN"  # 输出语言
+  include_predictions: true  # 是否包含预测
+  prediction_timeframe: "未来1-3个月"  # 预测时间范围
 
 # 日志配置
 logging:
-  level: "INFO"
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR, CRITICAL
   file: "logs/news_analyzer.log"
   max_file_size_mb: 10
   backup_count: 5
@@ -83,13 +181,13 @@ logging:
 # 调度配置
 scheduler:
   enabled: true
-  run_time: "08:00"
-  timezone: "Asia/Shanghai"
+  run_time: "08:00"  # 每天运行时间 (24小时制)
+  timezone: "Asia/Shanghai"  # 时区
 
 # 数据存储配置
 storage:
   save_raw_news: true
   news_cache_dir: "data/news_cache"
   reports_dir: "data/reports"
-  max_cache_days: 7
+  max_cache_days: 360  # 缓存保留天数
 
