@@ -151,10 +151,12 @@ class LLMAnalyzer:
         output_language = self.analysis_config.get('output_language', 'zh-CN')
         include_predictions = self.analysis_config.get('include_predictions', True)
         prediction_timeframe = self.analysis_config.get('prediction_timeframe', '未来1-3个月')
+        include_a_share = self.analysis_config.get('include_a_share_analysis', False)
+        a_share_focus = self.analysis_config.get('a_share_focus', [])
         
         focus_areas_text = "\n".join([f"- {area}" for area in focus_areas])
         
-        prompt = f"""你是一位资深的国际时事和金融分析专家。请基于以下全球新闻，进行深度分析。
+        prompt = f"""你是一位资深的国际时事和金融分析专家，特别精通中国A股市场。请基于以下全球新闻，进行深度分析。
 
 # 今日全球新闻摘要
 
@@ -205,7 +207,52 @@ class LLMAnalyzer:
 - 对全球股市的影响
 - 具体板块机会和风险
 - 关注的上市公司或行业
+"""
+        
+        # 添加A股专项分析
+        if include_a_share and a_share_focus:
+            a_share_focus_text = "\n".join([f"  - {item}" for item in a_share_focus])
+            prompt += f"""
+### 6. 中国A股市场专项分析（重点）
+请基于全球新闻对中国A股市场进行详细分析：
 
+#### 6.1 市场趋势判断
+- 沪深300、上证指数、创业板指数的短期和中期走势预测
+- 市场情绪和资金流向分析
+- 技术面和基本面综合判断
+
+#### 6.2 行业板块分析
+{a_share_focus_text}
+- 具体分析各板块的机会和风险
+- 推荐关注的行业和主题（例如：新能源、半导体、消费、医药、AI等）
+- 行业轮动预期
+
+#### 6.3 政策影响评估
+- 中国货币政策和财政政策对A股的影响
+- 产业政策导向（如"新质生产力"、"双碳目标"等）
+- 监管政策变化对相关板块的影响
+
+#### 6.4 外部因素传导
+- 美联储货币政策对A股的间接影响
+- 全球贸易形势对出口导向企业的影响
+- 地缘政治对相关产业链的影响
+- 国际大宗商品价格波动的影响
+
+#### 6.5 A股投资建议
+- 推荐配置的板块和行业（请给出3-5个）
+- 建议回避或谨慎的领域
+- 具体的股票池建议（如果有明显机会）
+- 仓位控制和风险管理建议
+
+#### 6.6 关键关注点
+- 需要密切关注的经济数据（如PMI、社融、CPI等）
+- 重要的政策会议和时间节点
+- 可能触发市场波动的风险因素
+
+### 7. 未来预测（{prediction_timeframe}）
+"""
+        else:
+            prompt += f"""
 ### 6. 未来预测（{prediction_timeframe}）
 """
         
@@ -215,7 +262,10 @@ class LLMAnalyzer:
 - 投资建议和风险警示
 - 需要关注的关键指标
 
-### 7. 行动建议
+"""
+            
+            section_num = 8 if include_a_share else 7
+            prompt += f"""### {section_num}. 行动建议
 - 投资组合调整建议
 - 风险对冲策略
 - 关注事项和时间节点
@@ -228,6 +278,7 @@ class LLMAnalyzer:
 - 指出不确定性和多种可能性
 - 区分短期波动和长期趋势
 - 提供可操作的建议
+- 对于A股分析，请结合中国特色市场环境（如政策市特征、北上资金流向、融资融券等）
 
 请开始你的分析："""
         

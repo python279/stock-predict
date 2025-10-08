@@ -161,14 +161,24 @@ analysis:
     - "地缘政治风险"
     - "贸易关系变化"
     - "货币政策"
-    - "股市影响因素"
+    - "全球股市影响因素"
+    - "中国A股市场分析"
     - "大宗商品价格"
     - "科技发展趋势"
     - "AI行业发展"
     - "新能源汽车"
+    - "半导体产业链"
   output_language: "zh-CN"  # 输出语言
   include_predictions: true  # 是否包含预测
   prediction_timeframe: "未来1-3个月"  # 预测时间范围
+  include_a_share_analysis: true  # 是否包含A股专项分析
+  a_share_focus:
+    - "沪深300指数趋势"
+    - "创业板/科创板机会"
+    - "行业板块轮动"
+    - "政策导向行业"
+    - "出口导向企业影响"
+    - "资金流向分析"
 
 # 日志配置
 logging:
