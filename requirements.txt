@@ -29,3 +29,6 @@ certifi>=2023.7.22
 # HTML解析
 html5lib>=1.1
 
+# Markdown 转 HTML
+markdown>=3.5
+

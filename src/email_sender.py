@@ -12,6 +12,7 @@ import logging
 from typing import Dict, Any, Optional, List
 from datetime import datetime
 import os
+import markdown as md_lib
 
 logger = logging.getLogger(__name__)
 
@@ -170,9 +171,11 @@ class EmailSender:
         """
         analysis_text = analysis_result.get('analysis', '暂无分析')
         articles_count = analysis_result.get('articles_count', 0)
+        history_days = analysis_result.get('history_days', 0)
+        history_count = analysis_result.get('history_articles_count', 0)
         regions = ', '.join(analysis_result.get('regions_covered', []))
         analysis_time = analysis_result.get('analysis_time', '')
-        
+
         # 将 Markdown 格式的分析转换为 HTML
         analysis_html = self._markdown_to_html(analysis_text)
         
@@ -228,14 +231,20 @@ class EmailSender:
             margin-bottom: 15px;
         }}
         h3 {{
-            color: #424242;
-            margin-top: 20px;
-            margin-bottom: 10px;
+            color: #1565C0;
+            border-left: 4px solid #2196F3;
+            padding-left: 14px;
+            margin-top: 28px;
+            margin-bottom: 12px;
+            font-size: 17px;
         }}
         h4 {{
-            color: #616161;
-            margin-top: 15px;
+            color: #37474F;
+            border-left: 3px solid #90CAF9;
+            padding-left: 10px;
+            margin-top: 18px;
             margin-bottom: 8px;
+            font-size: 15px;
         }}
         ul, ol {{
             padding-left: 25px;
@@ -281,6 +290,59 @@ class EmailSender:
             border-radius: 3px;
             font-family: 'Courier New', monospace;
         }}
+        blockquote {{
+            border-left: 4px solid #2196F3;
+            margin: 16px 0;
+            padding: 10px 16px;
+            background-color: #E3F2FD;
+            color: #555;
+            border-radius: 0 4px 4px 0;
+        }}
+        blockquote p {{
+            margin: 0;
+        }}
+        table {{
+            width: 100%;
+            border-collapse: collapse;
+            margin: 16px 0;
+            font-size: 14px;
+        }}
+        th {{
+            background-color: #1976D2;
+            color: white;
+            padding: 10px 14px;
+            text-align: left;
+            font-weight: 600;
+        }}
+        td {{
+            padding: 9px 14px;
+            border-bottom: 1px solid #e0e0e0;
+            vertical-align: top;
+        }}
+        tr:nth-child(even) td {{
+            background-color: #f5f8ff;
+        }}
+        tr:hover td {{
+            background-color: #e8f0fe;
+        }}
+        hr {{
+            border: none;
+            border-top: 1px solid #e0e0e0;
+            margin: 24px 0;
+        }}
+        strong {{
+            color: #222;
+        }}
+        p {{
+            margin: 6px 0 10px 0;
+        }}
+        li p {{
+            margin: 0;
+        }}
+        em {{
+            color: #555;
+            font-style: italic;
+        }}
     </style>
 </head>
 <body>
@@ -289,7 +351,8 @@ class EmailSender:
             <h1>📊 全球新闻分析报告</h1>
             <div class="meta">
                 <span class="meta-item">📅 {datetime.now().strftime('%Y年%m月%d日 %H:%M')}</span>
-                <span class="meta-item">📰 分析文章: {articles_count} 篇</span>
+                <span class="meta-item">📰 今日新闻: {articles_count} 篇</span>
+                {f'<span class="meta-item">📂 历史参考: {history_days} 天 / {history_count} 篇</span>' if history_days > 0 else ''}
                 <span class="meta-item">🌍 覆盖地区: {regions}</span>
             </div>
         </div>
@@ -312,63 +375,55 @@ class EmailSender:
     
     def _markdown_to_html(self, markdown_text: str) -> str:
         """
-        简单的 Markdown 到 HTML 转换
-        
+        将 Markdown 文本转换为 HTML。
+
+        预处理：
+          - 剥除 LLM 偶尔在回复外层包裹的 ```markdown ... ``` 代码围栏
+          - 去除首尾多余空白
+
+        启用扩展（via `extra` 包 + 单独扩展）：
+          extra      = tables + fenced_code + footnotes + attr_list +
+                       def_list + abbr + md_in_html
+          sane_lists = 更严格的列表解析，避免缩进歧义
+          smarty     = 智能引号/破折号（--- → —）
+
+        注意：故意不启用 nl2br，避免在长列表项续行处插入多余 <br>，
+        行间距由 CSS 的 p/li margin 控制。
+
         Args:
-            markdown_text: Markdown 文本
-        
+            markdown_text: Markdown 格式字符串
+
         Returns:
             HTML 字符串
         """
-        html_lines = []
-        lines = markdown_text.split('\n')
-        in_list = False
-        
-        for line in lines:
-            line = line.rstrip()
-            
-            # 标题
-            if line.startswith('####'):
-                html_lines.append(f'<h4>{line[4:].strip()}</h4>')
-            elif line.startswith('###'):
-                html_lines.append(f'<h3>{line[3:].strip()}</h3>')
-            elif line.startswith('##'):
-                html_lines.append(f'<h2>{line[2:].strip()}</h2>')
-            elif line.startswith('#'):
-                html_lines.append(f'<h1>{line[1:].strip()}</h1>')
-            
-            # 列表
-            elif line.strip().startswith('- ') or line.strip().startswith('* '):
-                if not in_list:
-                    html_lines.append('<ul>')
-                    in_list = True
-                html_lines.append(f'<li>{line.strip()[2:]}</li>')
-            
-            elif line.strip().startswith(tuple([f'{i}.' for i in range(1, 10)])):
-                if not in_list:
-                    html_lines.append('<ol>')
-                    in_list = True
-                content = line.strip().split('.', 1)[1].strip()
-                html_lines.append(f'<li>{content}</li>')
-            
-            # 普通段落
-            elif line.strip():
-                if in_list:
-                    html_lines.append('</ul>' if html_lines[-1].startswith('<li>') else '</ol>')
-                    in_list = False
-                html_lines.append(f'<p>{line}</p>')
-            
-            # 空行
-            else:
-                if in_list:
-                    html_lines.append('</ul>' if '<ul>' in '\n'.join(html_lines[-10:]) else '</ol>')
-                    in_list = False
-                html_lines.append('<br>')
-        
-        if in_list:
-            html_lines.append('</ul>')
-        
-        return '\n'.join(html_lines)
+        import re
+
+        # 剥除整体 ```markdown ... ``` 或 ``` ... ``` 包裹
+        text = markdown_text.strip()
+        text = re.sub(
+            r'^```(?:markdown)?\s*\n([\s\S]*?)\n```\s*$',
+            r'\1',
+            text,
+            flags=re.MULTILINE,
+        )
+
+        extensions = [
+            'extra',       # tables, fenced_code, footnotes, attr_list, def_list, abbr
+            'sane_lists',  # 严格列表解析
+            'smarty',      # 智能标点
+        ]
+        extension_configs = {
+            'smarty': {
+                'smart_quotes': False,   # 不转换引号（避免中文引号被替换）
+                'smart_dashes': True,    # --- → —
+            },
+        }
+        return md_lib.markdown(
+            text,
+            extensions=extensions,
+            extension_configs=extension_configs,
+            output_format='html',
+        )
     
     def _build_references_html(self, analysis_result: Dict[str, Any]) -> str:
         """

@@ -187,6 +187,84 @@ class DataStorage:
         except Exception as e:
             logger.error(f"清理缓存失败: {e}")
     
+    def load_historical_news_cache(self, days: int = 5) -> Dict[str, List[Dict[str, Any]]]:
+        """
+        加载过去 N 天的新闻缓存，按日期分组返回
+
+        每天只取当天最新的一个缓存文件，每天最多返回 max_per_day 篇文章（按
+        priority 降序），避免 token 超限。
+
+        Args:
+            days: 往前追溯的天数（不含今天）
+
+        Returns:
+            {日期字符串(YYYY-MM-DD): [article_dict, ...]} 的有序字典，
+            日期从最近到最远排列
+        """
+        result: Dict[str, List[Dict[str, Any]]] = {}
+
+        try:
+            if not os.path.exists(self.news_cache_dir):
+                return result
+
+            today = datetime.now().date()
+
+            # 收集候选文件：{date_obj: [filepath, ...]}
+            date_files: Dict[Any, List[str]] = {}
+            for filename in os.listdir(self.news_cache_dir):
+                if not (filename.startswith('news_') and filename.endswith('.json')):
+                    continue
+                # 文件名格式: news_YYYYMMDD_HHMMSS.json
+                parts = filename[5:-5].split('_')  # 去掉 "news_" 和 ".json"
+                if len(parts) < 1:
+                    continue
+                date_str = parts[0]  # YYYYMMDD
+                if len(date_str) != 8:
+                    continue
+                try:
+                    file_date = datetime.strptime(date_str, '%Y%m%d').date()
+                except ValueError:
+                    continue
+
+                # 只保留今天之前的 N 天
+                delta = (today - file_date).days
+                if delta < 1 or delta > days:
+                    continue
+
+                if file_date not in date_files:
+                    date_files[file_date] = []
+                date_files[file_date].append(
+                    os.path.join(self.news_cache_dir, filename)
+                )
+
+            # 每天取最新文件，限制每天最多 25 篇
+            max_per_day = 25
+            for file_date in sorted(date_files.keys(), reverse=True):
+                # 取当天最新文件（按文件名字典序最大即最新）
+                latest_file = sorted(date_files[file_date])[-1]
+                try:
+                    with open(latest_file, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                    articles = data.get('articles', [])
+
+                    # 按 priority 降序截取
+                    articles.sort(
+                        key=lambda a: a.get('priority', 0), reverse=True
+                    )
+                    result[file_date.strftime('%Y-%m-%d')] = articles[:max_per_day]
+                    logger.debug(
+                        f"加载历史新闻 {file_date}: {len(articles[:max_per_day])} 篇 "
+                        f"(来自 {os.path.basename(latest_file)})"
+                    )
+                except Exception as e:
+                    logger.warning(f"读取历史缓存失败 {latest_file}: {e}")
+
+            logger.info(f"加载历史新闻完成，共 {len(result)} 天的数据")
+        except Exception as e:
+            logger.error(f"加载历史新闻缓存失败: {e}")
+
+        return result
+
     def get_latest_report(self) -> Optional[str]:
         """
         获取最新的报告文件路径

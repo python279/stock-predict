@@ -80,10 +80,21 @@ class NewsAnalyzerApp:
             # 2. 保存新闻缓存
             logger.info("步骤 2/5: 保存新闻缓存...")
             self.storage.save_news_cache(articles)
-            
+
+            # 2.5 加载过去5天历史新闻（用于黑天鹅对比分析）
+            logger.info("步骤 2.5/5: 加载历史新闻缓存（过去5天）...")
+            historical_news = self.storage.load_historical_news_cache(days=5)
+            if historical_news:
+                logger.info(
+                    f"已加载 {len(historical_news)} 天历史数据: "
+                    + ", ".join(sorted(historical_news.keys()))
+                )
+            else:
+                logger.info("无历史新闻缓存，仅使用今日数据")
+
             # 3. 分析新闻
             logger.info("步骤 3/5: 使用大模型分析新闻...")
-            analysis_result = self.analyzer.analyze_news(articles)
+            analysis_result = self.analyzer.analyze_news(articles, historical_news=historical_news)
             
             if not analysis_result or not analysis_result.get('analysis'):
                 logger.error("新闻分析失败")
