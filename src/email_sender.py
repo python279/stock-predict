@@ -379,6 +379,7 @@ class EmailSender:
 
         预处理：
           - 剥除 LLM 偶尔在回复外层包裹的 ```markdown ... ``` 代码围栏
+          - 修正表格表头行与分隔行被粘在同一行的情况（表末 `|` 后误接 `|----|...`）
           - 去除首尾多余空白
 
         启用扩展（via `extra` 包 + 单独扩展）：
@@ -405,6 +406,13 @@ class EmailSender:
             r'\1',
             text,
             flags=re.MULTILINE,
+        )
+
+        # 表头最后一格「| … |」与分隔行「|---|…」被模型输出在同一行时，GFM 表格无法解析
+        text = re.sub(
+            r'(\|[^|\n]+\|)\s+(\|(?:-{3,}\|)+)',
+            r'\1\n\2',
+            text,
         )
 
         extensions = [

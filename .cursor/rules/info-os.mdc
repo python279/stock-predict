@@ -5,47 +5,46 @@ alwaysApply: true
 # Info-OS 全球新闻自动分析系统
 
 ## 项目概述
-这是一个完全自动化的国际新闻抓取、分析和通知系统。每天自动抓取世界各地的权威新闻，使用大模型进行深度分析，预测世界局势和股市影响，并通过邮件发送分析报告。
+完全自动化的国际新闻抓取、分析和通知系统。每天自动抓取世界各地的权威新闻，使用大模型进行深度分析，预测世界局势、识别黑天鹅事件并分析 A股/美股/港股/日股的投资机会，通过邮件发送 HTML 格式分析报告。
 
 ## 核心需求
 
 ### 1. 新闻抓取
-- **目标区域**: 美国、欧洲、东南亚各国、俄罗斯等世界主要经济体
-- **质量要求**: 
-  - 只使用官方可信渠道（BBC、Financial Times、Channel NewsAsia等）
+- **目标区域**: 美国、欧洲、东南亚、俄罗斯、中东等世界主要经济体
+- **质量要求**:
+  - 只使用官方可信渠道（Reuters、BBC、Financial Times、AP 等）
   - 排除造谣、煽动情绪的媒体
   - 确保新闻源的权威性和客观性
 - **技术方案**:
   - News API：覆盖10个国家，3个类别（business, technology, general）
-  - RSS Feed：19个权威新闻源，100%可用率
+  - RSS Feed：32个权威新闻源（含黑天鹅预警专项渠道）
   - 自动去重和内容过滤
 
 ### 2. AI 分析
 - **分析维度**:
-  - 全球经济趋势（宏观经济、货币政策、贸易关系）
+  - 全球经济趋势（宏观经济、四大央行货币政策、贸易关系）
   - 地缘政治风险评估
-  - 股市影响分析（板块机会和风险）
+  - **黑天鹅事件预警与投资策略**（含收益最大化方案）
+  - 四大股市专项分析：A股、美股、港股、日本股市
   - 未来1-3个月预测
-  - 投资建议和行动建议
+  - 综合行动建议（四大市场仓位分配）
+- **数据输入**:
+  - 今日新闻 + 过去5天历史新闻（用于对比识别黑天鹅信号）
 - **大模型配置**:
   - 支持 OpenAI、Anthropic、OpenAI兼容接口
-  - 当前使用：讯飞星火 x1 模型
-  - 输出中文分析报告
+  - 当前使用：本地 Ollama（qwen3.5:35b）或可替换为 OpenAI/讯飞
+  - Prompt 拆分为 system prompt（角色/框架/结构）和 user prompt（新闻数据）
+  - 强制要求输出标准 Markdown 格式
 
 ### 3. 自动通知
 - **邮件发送**:
-  - 精美的 HTML 格式报告
+  - 使用 `markdown` 库将 LLM 输出转为精美 HTML（支持表格/引用块/粗体等）
   - 支持 Gmail、QQ邮箱、163邮箱等
-  - 每天定时发送分析结果
-- **报告内容**:
-  - 重要新闻速览
-  - 区域形势分析
-  - 经济趋势预测
-  - 股市投资建议
+  - 每天定时发送分析结果，支持多收件人
 
 ### 4. 全自动化
 - **定时调度**: 每天 08:00 自动运行
-- **完全无人值守**: 抓取→分析→发送全流程自动化
+- **完全无人值守**: 抓取→加载历史→分析→发送全流程自动化
 - **错误处理**: 失败自动重试，异常邮件通知
 - **数据管理**: 自动保存缓存，定期清理过期数据
 
@@ -54,20 +53,20 @@ alwaysApply: true
 ### 模块化设计
 ```
 src/
-├── config_loader.py      # 配置加载和验证
-├── news_fetcher.py        # 新闻抓取（News API + RSS）
-├── llm_analyzer.py        # 大模型分析
-├── email_sender.py        # 邮件发送
-├── data_storage.py        # 数据存储和管理
-├── logger_config.py       # 日志系统
-├── main.py               # 主程序流程
-└── scheduler.py          # 定时调度器
+├── config_loader.py   # 配置加载和验证
+├── news_fetcher.py    # 新闻抓取（News API + RSS）
+├── llm_analyzer.py    # 大模型分析（system/user prompt 分离）
+├── email_sender.py    # 邮件发送（markdown→HTML）
+├── data_storage.py    # 数据存储（含历史新闻加载）
+├── logger_config.py   # 日志系统
+├── main.py            # 主程序流程
+└── scheduler.py       # 定时调度器
 ```
 
 ### 关键特性
 - **健壮性**: 完善的异常处理、重试机制、超时控制
 - **可配置**: 所有参数通过 config.yaml 配置
-- **可扩展**: 模块化设计，易于添加新的新闻源或分析维度
+- **可扩展**: 模块化设计，易于添加新闻源或分析维度
 - **高质量**: 代码清晰、注释完整、类型提示
 
 ## 配置要点
@@ -76,22 +75,49 @@ src/
 1. **邮箱设置** (`config.yaml` - email)
    - 推荐 QQ 邮箱（国内稳定）
    - 使用授权码而非登录密码
-   
+
 2. **大模型 API** (`config.yaml` - llm)
-   - 当前：讯飞星火 API
-   - 支持切换到 OpenAI/Anthropic
-   
+   - 当前：本地 Ollama 兼容接口（`base_url: "http://localhost:11434/v1/"`）
+   - 支持切换到 OpenAI/Anthropic/讯飞星火
+
 3. **News API** (`config.yaml` - news_api) [可选]
    - 免费版 100次/天
    - 不配置也可只用 RSS
 
-### RSS 新闻源（19个，100%可用）
-- **全球**: BBC, Al Jazeera
-- **美洲**: NPR, CNN
-- **欧洲**: Financial Times, Guardian, Deutsche Welle, France 24
-- **亚洲**: Channel NewsAsia, Nikkei Asia, SCMP, The Straits Times, Bangkok Post
-- **俄罗斯**: TASS, Moscow Times
-- **国际组织**: UN News, IMF News
+### RSS 新闻源（32个，按类型分组）
+
+**电报社（突发预警，比普通媒体快15-30分钟）**
+- Reuters World（feedburner备用）、Sky News World、NBC News、ABC News International
+
+**全球综合**
+- BBC World News、BBC Business、Al Jazeera
+
+**欧洲**
+- Financial Times、Deutsche Welle、France 24、The Guardian World
+
+**亚洲**
+- Channel NewsAsia、Nikkei Asia、The Straits Times、Bangkok Post、South China Morning Post、Asia Times
+
+**中东专项（黑天鹅高发区）**
+- Middle East Eye、Jerusalem Post、IFP News (Iran)
+
+**军事/防务**
+- Defence Blog、Defense News
+
+**俄罗斯**
+- TASS、Moscow Times
+
+**美洲**
+- NPR News、CNN Top Stories、CNN World
+
+**金融/政治深度**
+- CNBC World News、Washington Post World、NYT World
+
+**国际组织**
+- UN News、IMF News
+
+### 黑天鹅预警关键词（content_filter.include_keywords）
+除经济类关键词外，还包含：strike、attack、military、missile、conflict、war、crisis、collapse、coup、assassination、nuclear、escalation、invasion 等
 
 ## Python 解释器
 
@@ -126,20 +152,53 @@ src/
 
 ## 预期输出
 
-### 分析报告包含
-1. **重要新闻速览**: 3-5条最重要的全球事件
-2. **区域形势分析**: 美洲、欧洲、亚洲、俄罗斯详细分析
-3. **全球经济趋势**: 宏观指标、货币政策、贸易关系
-4. **地缘政治风险**: 潜在冲突和影响评估
-5. **股市影响分析**: 板块机会、风险警示、关注公司
-6. **未来预测**: 1-3个月内可能发生的事件
-7. **投资建议**: 组合调整、风险对冲、关注指标
+### 分析报告结构（11章）
+1. **重要新闻速览** — 3-5条最重要事件，含历史对比
+2. **区域形势分析** — 美洲、欧洲、亚洲、俄罗斯、中东
+3. **全球经济趋势** — 宏观指标、四大央行政策、大宗商品
+4. **地缘政治风险** — 主要事件与紧张局势
+5. **⚡ 黑天鹅事件预警** — 信号识别、风险评级矩阵、**收益最大化投资策略**（含 T+0~T+3 快速响应）
+6. **中国A股专项** — 市场趋势、行业板块、政策传导、黑天鹅冲击路径
+7. **美股专项** — 标普500/纳指/道指、Mag-7、板块轮动、ETF建议
+8. **港股专项** — 恒生/恒生科技、南下资金、中概科技
+9. **日本股市专项** — 日经225、日元汇率影响、半导体设备
+10. **未来预测** — 四大市场运行路径预判
+11. **综合行动建议** — 四大市场仓位分配、黑天鹅对冲、警戒线
 
 ### 性能指标
-- **抓取速度**: ~50秒（19个RSS + News API）
-- **分析速度**: ~49秒（讯飞星火）
-- **总耗时**: ~2分钟
-- **成本**: ~¥0.03-0.06/次
+- **抓取速度**: ~60秒（32个RSS + News API）
+- **分析速度**: 依模型而定（本地Ollama约2-5分钟）
+- **总耗时**: ~3-6分钟
+
+## 关键模块说明
+
+### `llm_analyzer.py`
+- `analyze_news(articles, historical_news)` — 主入口，接收今日+历史新闻
+- `_build_system_prompt()` — 角色定义、分析框架、11章报告结构（稳定不变）
+- `_build_user_prompt(news_summary)` — 今日日期 + 新闻数据（每次动态生成）
+- `_call_llm(system_prompt, user_prompt)` — 支持 OpenAI/Anthropic 双接口
+- System prompt 强制要求输出 `###`/`####` 标题、Markdown 表格、`**粗体**` 等格式
+
+### `data_storage.py`
+- `save_news_cache(articles)` — 保存今日新闻缓存（`news_YYYYMMDD_HHMMSS.json`）
+- `load_historical_news_cache(days=5)` — 加载过去 N 天缓存，每天最多25篇（按 priority 降序），返回 `{日期: [文章dict]}` 字典
+- `save_analysis_report(result)` — 保存 JSON + TXT 两种格式
+
+### `email_sender.py`
+- `_markdown_to_html(text)` — 使用 `markdown` 库转换，启用 `extra`（含 tables）+ `sane_lists` + `smarty` 扩展；预处理剥除 LLM 偶尔包裹的 ` ```markdown ``` ` 围栏
+- CSS 支持：`h3`（蓝色左边框，主章节）、`h4`（浅蓝左边框，子章节）、表格（斑马纹+悬停）、blockquote（蓝色）
+- 邮件头显示：今日文章数 + 历史天数/篇数 + 覆盖地区
+
+### `main.py` 运行流程
+```
+步骤1  抓取今日新闻
+步骤2  保存新闻缓存
+步骤2.5 加载过去5天历史新闻
+步骤3  LLM 分析（今日 + 历史）
+步骤4  保存分析报告
+步骤5  发送邮件
+清理   清理过期缓存
+```
 
 ## 代码规范
 
@@ -171,33 +230,50 @@ src/
 ### 定期检查
 1. **RSS源状态**: 运行 `test_rss_sources.py` 检查可用性
 2. **API配额**: 监控 News API 和 LLM API 使用量
-3. **报告质量**: 定期审查生成的分析报告
+3. **报告质量**: 定期审查生成的分析报告，尤其是黑天鹅章节的信号识别
 4. **日志文件**: 检查 `logs/news_analyzer.log` 查找异常
 
 ### 常见问题
 - **邮件发送失败**: 切换到 QQ 邮箱或配置代理
 - **RSS源失效**: 运行测试工具检查并替换
 - **LLM超时**: 调整 timeout 或切换模型
-- **内存不足**: 减少 max_articles 配置
+- **内存不足**: 减少 `fetcher.max_articles` 配置
+- **Markdown 未渲染**: 检查 LLM 是否输出了代码围栏包裹，`_markdown_to_html` 会自动剥除
 
 ### 扩展开发
-- **添加新闻源**: 在 config.yaml 的 rss_feeds.sources 添加
-- **调整分析维度**: 修改 config.yaml 的 analysis.focus_areas
-- **添加通知方式**: 扩展 email_sender.py 支持微信/Telegram
-- **更换大模型**: 修改 llm_analyzer.py 支持新的 API
+- **添加新闻源**: 在 `config.yaml` 的 `rss_feeds.sources` 添加，注意设置 `region` 和 `priority`
+- **调整分析维度**: 修改 `config.yaml` 的 `analysis.focus_areas`
+- **修改报告结构**: 修改 `llm_analyzer.py` 的 `_build_system_prompt()`
+- **添加通知方式**: 扩展 `email_sender.py` 支持微信/Telegram
+- **更换大模型**: 修改 `config.yaml` 的 `llm` 配置（provider/model/base_url）
+
+## 依赖说明（requirements.txt 关键项）
+- `feedparser` — RSS 抓取
+- `openai` — OpenAI / 兼容接口
+- `anthropic` — Anthropic Claude
+- `markdown>=3.5` — Markdown 转 HTML（含 tables/extra 扩展）
+- `schedule` — 定时调度
+- `pyyaml` — 配置文件解析
 
 ## 项目状态
 
-- **完成度**: 98%
+- **完成度**: 100%
 - **核心功能**: 全部完成并测试通过
 - **代码质量**: 高（模块化、健壮、易维护）
-- **文档**: README.md（完整使用文档，包含快速开始、配置、运维等所有内容）
-- **待完善**: 邮箱配置（推荐使用QQ邮箱）
+- **最近更新**:
+  - RSS 源扩展至 32 个（含黑天鹅专项：Reuters、Middle East Eye、Jerusalem Post、军事媒体等）
+  - 新增黑天鹅事件预警章节（含收益最大化投资策略、T+0~T+3 快速响应）
+  - 新增美股/港股/日股三大市场专项分析
+  - 历史新闻对比：每次分析同时输入过去5天数据
+  - LLM Prompt 拆分为 system/user 两段，格式规范显式声明 Markdown
+  - 邮件 Markdown→HTML 升级为 `markdown` 库，修复表格、粗体等渲染问题
 
 ## 重要文件
 
-- `README.md` - 完整使用文档（包含快速开始、配置详解、FAQ等所有内容）
-- `config.yaml` - 主配置文件
-- `requirements.txt` - Python 依赖
-- `src/test_email.py` - 邮件测试工具
-- `run.sh` - 快速启动脚本
+- `README.md` — 完整使用文档（快速开始、配置详解、FAQ）
+- `config.yaml` — 主配置文件（RSS源、LLM、分析维度、调度等）
+- `requirements.txt` — Python 依赖
+- `src/test_email.py` — 邮件测试工具
+- `run.sh` — 快速启动脚本
+- `data/news_cache/` — 新闻缓存（供历史分析使用）
+- `data/reports/` — 历史分析报告

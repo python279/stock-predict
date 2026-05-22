@@ -2,18 +2,19 @@
 
 ## 📋 项目简介
 
-这是一个完全自动化的国际新闻抓取、分析和通知系统。系统每天自动抓取世界各地的权威新闻源（美国、欧洲、东南亚、俄罗斯等），使用大模型（OpenAI/Anthropic/讯飞星火）进行深度分析，预测世界局势和股市影响，并通过邮件自动发送分析报告。
+完全自动化的国际新闻抓取、分析和通知系统。系统每天自动抓取世界各地的权威新闻源，使用大模型进行深度分析，识别**黑天鹅事件**、预测世界局势并分析 **A股/美股/港股/日股** 投资机会，通过邮件自动发送精美 HTML 格式分析报告。
 
 ## ✨ 主要特性
 
-- 🌍 **多源新闻抓取**: News API + 19个权威RSS新闻源（100%可用）
-- 🤖 **智能AI分析**: 使用大模型深度分析全球政治经济形势
-- 📊 **股市预测**: 分析新闻对股市的影响并提供专业投资建议
-- 📧 **自动邮件**: 每天定时发送精美的HTML格式分析报告
+- 🌍 **多源新闻抓取**: News API + **32个**权威 RSS 新闻源（含黑天鹅专项渠道）
+- ⚡ **黑天鹅预警**: 对比历史5天新闻，识别军事/金融/政治/能源/科技突发信号
+- 🤖 **智能AI分析**: system/user prompt 分离，强制 Markdown 输出格式
+- 📈 **四大市场覆盖**: A股、美股、港股、日本股市专项分析
+- 💰 **投资策略**: 针对黑天鹅情景给出收益最大化方案（含 T+0~T+3 快速响应）
+- 📧 **自动邮件**: 每天定时发送，Markdown 完整渲染（表格/粗体/引用块）
 - ⏰ **自动调度**: 支持定时自动执行，完全无人值守
 - 🛡️ **高可靠性**: 完善的错误处理和重试机制
 - ⚙️ **高度可配置**: 所有参数均可通过配置文件调整
-- 📦 **模块化设计**: 清晰的代码结构，易于扩展和维护
 
 ## 🏗️ 项目结构
 
@@ -21,24 +22,24 @@
 info-os/
 ├── config.yaml              # 主配置文件
 ├── requirements.txt         # Python依赖
-├── README.md               # 本文件
-├── run.sh                  # 快速启动脚本
-├── src/                    # 源代码目录
-│   ├── config_loader.py    # 配置加载模块
-│   ├── news_fetcher.py     # 新闻抓取模块（News API + RSS）
-│   ├── llm_analyzer.py     # 大模型分析模块
-│   ├── email_sender.py     # 邮件发送模块
-│   ├── data_storage.py     # 数据存储模块
-│   ├── logger_config.py    # 日志配置模块
-│   ├── main.py            # 主程序
-│   ├── scheduler.py       # 定时调度器
-│   ├── test_config.py     # 配置测试工具
-│   ├── test_rss_sources.py # RSS源测试工具
-│   └── test_email.py      # 邮件测试工具
-├── data/                   # 数据目录
-│   ├── news_cache/        # 新闻缓存
-│   └── reports/           # 分析报告（JSON + TXT）
-└── logs/                   # 日志目录
+├── README.md                # 本文件
+├── run.sh                   # 快速启动脚本
+├── src/                     # 源代码目录
+│   ├── config_loader.py     # 配置加载模块
+│   ├── news_fetcher.py      # 新闻抓取模块（News API + RSS）
+│   ├── llm_analyzer.py      # 大模型分析模块（system/user prompt 分离）
+│   ├── email_sender.py      # 邮件发送模块（markdown→HTML）
+│   ├── data_storage.py      # 数据存储模块（含历史新闻加载）
+│   ├── logger_config.py     # 日志配置模块
+│   ├── main.py              # 主程序
+│   ├── scheduler.py         # 定时调度器
+│   ├── test_config.py       # 配置测试工具
+│   ├── test_rss_sources.py  # RSS源测试工具
+│   └── test_email.py        # 邮件测试工具
+├── data/                    # 数据目录
+│   ├── news_cache/          # 新闻缓存（供历史分析使用）
+│   └── reports/             # 分析报告（JSON + TXT）
+└── logs/                    # 日志目录
     └── news_analyzer.log
 ```
 
@@ -55,7 +56,7 @@ info-os/
 
 **创建并激活虚拟环境：**
 ```bash
-cd /Users/lhq/Develop/info-os
+cd /path/to/info-os
 
 # 创建虚拟环境
 python3 -m venv .venv
@@ -92,20 +93,16 @@ email:
   smtp_port: 587
   sender_email: "your-qq-number@qq.com"
   sender_password: "授权码"  # 生成的授权码
-  recipient_email: "your-qq-number@qq.com"
+  recipient_emails:          # 支持多个收件人
+    - "your-qq-number@qq.com"
+    - "another@163.com"
 ```
 
 #### 选项B: 使用Gmail
 
-1. **启用两步验证**
-   - 访问: https://myaccount.google.com/security
-   - 启用"两步验证"
+1. **启用两步验证**：访问 https://myaccount.google.com/security
 
-2. **生成应用专用密码**
-   - 访问: https://myaccount.google.com/apppasswords
-   - 选择应用: "邮件"
-   - 选择设备: "Mac电脑"或"其他"
-   - 复制生成的16位密码
+2. **生成应用专用密码**：访问 https://myaccount.google.com/apppasswords
 
 3. **更新配置文件**：
 ```yaml
@@ -114,17 +111,16 @@ email:
   smtp_port: 587
   sender_email: "your-email@gmail.com"
   sender_password: "xxxx xxxx xxxx xxxx"  # 应用专用密码
-  recipient_email: "your-email@gmail.com"
+  recipient_emails:
+    - "your-email@gmail.com"
 ```
 
-**注意**: 
-- Gmail需要使用应用专用密码，不是登录密码
-- 如果连接Gmail超时，建议切换到QQ邮箱或163邮箱
+> **注意**: Gmail需要使用应用专用密码，不是登录密码。如果连接超时，建议切换到QQ邮箱。
 
-#### 其他邮箱选项
+#### 其他邮箱
 
-**163邮箱:**
 ```yaml
+# 163邮箱
 email:
   smtp_server: "smtp.163.com"
   smtp_port: 465
@@ -132,18 +128,20 @@ email:
   sender_password: "授权码"
 ```
 
-**126邮箱:**
-```yaml
-email:
-  smtp_server: "smtp.126.com"
-  smtp_port: 465
-  sender_email: "your-email@126.com"
-  sender_password: "授权码"
-```
-
 ### 步骤 3: 配置大模型API
 
 系统支持多种大模型，选择其中一种配置即可。
+
+#### 本地 Ollama（默认，免费）
+```yaml
+llm:
+  provider: "openai-compatible"
+  api_key: ""
+  model: "qwen3.5:35b"  # 或其他本地模型
+  base_url: "http://localhost:11434/v1/"
+  max_tokens: 65536
+  temperature: 0.8
+```
 
 #### OpenAI（GPT-4）
 ```yaml
@@ -151,8 +149,8 @@ llm:
   provider: "openai"
   api_key: "sk-..."
   model: "gpt-4o"
-  base_url: ""  # 留空使用官方API
-  max_tokens: 4000
+  base_url: ""
+  max_tokens: 8000
   temperature: 0.7
 ```
 
@@ -161,7 +159,7 @@ llm:
 llm:
   provider: "openai-compatible"
   api_key: "your-api-key"
-  model: "x1"  # 或其他模型名称
+  model: "x1"
   base_url: "https://spark-api-open.xf-yun.com/v2/"
   max_tokens: 32768
   temperature: 0.7
@@ -173,7 +171,7 @@ llm:
   provider: "anthropic"
   api_key: "sk-ant-..."
   model: "claude-3-5-sonnet-20241022"
-  max_tokens: 4000
+  max_tokens: 8000
   temperature: 0.7
 ```
 
@@ -187,17 +185,13 @@ news_api:
   api_key: "your-newsapi-key"
 ```
 
-**不配置也可以**：系统会自动使用19个RSS新闻源，完全够用。
+> **不配置也可以**：系统会自动使用32个RSS新闻源，完全够用。
 
 ### 步骤 5: 测试配置
-
-运行测试脚本验证配置：
 
 ```bash
 .venv/bin/python3 src/test_config.py
 ```
-
-如果看到所有测试通过，说明配置成功！
 
 ### 步骤 6: 立即运行
 
@@ -207,185 +201,206 @@ news_api:
 ```
 
 系统会：
-1. 抓取全球新闻（约50秒）
-2. AI分析（约49秒）
-3. 发送邮件报告
-
-总耗时约2分钟。
+1. 抓取全球新闻（约60秒，32个RSS源）
+2. 加载过去5天历史新闻（用于黑天鹅对比分析）
+3. AI分析生成11章报告（依模型而定）
+4. 发送HTML邮件报告
 
 **启动定时调度器（每天自动运行）：**
 ```bash
 .venv/bin/python3 src/scheduler.py
 ```
 
-系统会每天8:00自动运行（可在config.yaml中修改时间）。
-
 **使用启动脚本（最简单）：**
 ```bash
 ./run.sh
 ```
 
-选择运行模式即可。
+---
 
-## 📰 新闻源配置（19个，100%可用）
+## 📰 新闻源配置（32个）
 
-系统经过严格测试，配置了19个权威新闻源，**测试通过率100%**。
+系统配置了32个权威新闻源，按功能分为五大类。
 
-### 全球综合（3个）
-1. ✅ **BBC World News** - 英国公共广播，32篇新闻
-2. ✅ **BBC Business** - BBC商业频道，40篇新闻
-3. ✅ **Al Jazeera** - 半岛电视台，50篇新闻
+### 🔴 电报社 / 突发预警（4个）
+突发事件比普通媒体**早15-30分钟**报道，黑天鹅预警核心来源。
 
-### 美洲（3个）
-4. ✅ **NPR News** - 美国公共广播，10篇新闻
-5. ✅ **CNN Top Stories** - CNN头条新闻
-6. ✅ **CNN World** - CNN世界新闻
+| # | 名称 | 特点 |
+|---|------|------|
+| 1 | **Reuters World** | 全球最大通讯社 |
+| 2 | **Sky News World** | 英国24小时滚动 |
+| 3 | **NBC News** | 美国主流突发 |
+| 4 | **ABC News International** | 美国主流突发 |
 
-### 欧洲（4个）
-7. ✅ **Financial Times** - 英国金融时报，9篇新闻
-8. ✅ **Deutsche Welle** - 德国之声，151篇新闻
-9. ✅ **France 24** - 法国国际新闻，24篇新闻
-10. ✅ **The Guardian World** - 卫报世界版
+### 🌐 全球综合（3个）
 
-### 亚洲和东南亚（5个）
-11. ✅ **Channel NewsAsia** - 新加坡亚洲新闻台，20篇新闻
-12. ✅ **Nikkei Asia** - 日经亚洲，50篇新闻
-13. ✅ **The Straits Times** - 新加坡海峡时报，99篇新闻
-14. ✅ **Bangkok Post** - 曼谷邮报，10篇新闻
-15. ✅ **South China Morning Post** - 南华早报
+| # | 名称 | 特点 |
+|---|------|------|
+| 5 | **BBC World News** | 英国公共广播 |
+| 6 | **BBC Business** | BBC商业频道 |
+| 7 | **Al Jazeera** | 中东视角 |
 
-### 俄罗斯（2个）
-16. ✅ **TASS** - 俄罗斯塔斯社，45篇新闻
-17. ✅ **Moscow Times** - 莫斯科时报，50篇新闻
+### 🗺️ 区域媒体（16个）
 
-### 国际组织（2个）
-18. ✅ **UN News** - 联合国新闻，30篇新闻
-19. ✅ **IMF News** - 国际货币基金组织，10篇新闻
+**欧洲（4个）**: Financial Times、Deutsche Welle、France 24、The Guardian World
 
-### 新闻源特点
+**亚洲（6个）**: Channel NewsAsia、Nikkei Asia、The Straits Times、Bangkok Post、South China Morning Post、Asia Times
 
-**地域覆盖均衡：**
-- 全球综合: 3个源
-- 美洲: 3个源
-- 欧洲: 4个源
-- 亚洲: 5个源
-- 俄罗斯: 2个源
-- 国际组织: 2个源
+**俄罗斯（2个）**: TASS、Moscow Times
 
-**媒体类型多样：**
-- 公共广播: BBC, NPR, Deutsche Welle, France 24
-- 商业媒体: CNN, Financial Times, The Guardian, SCMP
-- 通讯社: TASS
-- 国际组织: UN, IMF
+**美洲（4个）**: NPR News、CNN Top Stories、CNN World（+NBC/ABC已在突发预警分类）
 
-**观点平衡：**
-- 西方视角: BBC, CNN, The Guardian, Financial Times
-- 中东视角: Al Jazeera
-- 亚洲视角: Nikkei Asia, SCMP, Channel NewsAsia
-- 俄罗斯视角: TASS, Moscow Times
-- 国际组织视角: UN, IMF
+### 🔥 黑天鹅专项（4个）
+专注于地缘政治高风险区域和军事动态。
 
-### 新闻获取能力
+| # | 名称 | 专注领域 |
+|---|------|---------|
+| 24 | **Middle East Eye** | 中东事件，以色列/伊朗冲突最快报道 |
+| 25 | **Jerusalem Post** | 以色列视角，中东军事预警 |
+| 26 | **IFP News (Iran)** | 伊朗视角，了解对方行动信号 |
+| 27 | **Defence Blog** | 军事装备、军事行动实时 |
 
-- **RSS Feed**: 19个源，每次约200篇新闻
-- **News API**: 10国家×3类别×10篇 = 约300篇新闻
-- **总计**: 每次可抓取约**500篇全球新闻**
-- **去重过滤后**: 保留最重要的50篇进行AI分析
+### 💹 金融/政治深度（5个）
+
+| # | 名称 | 专注领域 |
+|---|------|---------|
+| 28 | **Defense News** | 美国防务政策与军事采购 |
+| 29 | **CNBC World News** | 突发对市场影响第一时间 |
+| 30 | **Washington Post World** | 华盛顿决策内幕 |
+| 31 | **NYT World** | 深度背景报道 |
+| 32 | **UN News / IMF News** | 国际组织官方动态 |
 
 ### 测试RSS源
 
-可以随时测试RSS源的可用性：
 ```bash
 .venv/bin/python3 src/test_rss_sources.py
 ```
 
-## 📊 分析报告示例
+---
 
-每次运行后，您会收到包含以下内容的专业分析报告：
+## 📊 分析报告结构（11章）
 
-### 1. 重要新闻速览
-3-5条最重要的全球事件，附重要性说明
+每次运行后，您会收到包含以下11章的专业分析报告：
 
-### 2. 区域形势分析
-- **美洲地区**: 主要事件、经济与政策动向
-- **欧洲地区**: 主要事件、经济与政策动向
-- **亚洲地区**: 主要事件、经济与政策动向
-- **俄罗斯及独联体**: 主要事件、经济与政策动向
+### 第1章：重要新闻速览
+3-5条最重要的全球事件，今日新闻优先，附历史对比
 
-### 3. 全球经济趋势分析
-- 宏观经济指标变化
-- 货币政策走向
-- 贸易关系变化
-- 大宗商品价格趋势
+### 第2章：区域形势分析
+- 美洲地区 / 欧洲地区 / 亚洲地区 / 俄罗斯及独联体 / **中东地区**
 
-### 4. 地缘政治风险评估
-- 核心风险点
-- 潜在冲突领域
-- 经济传导路径
+### 第3章：全球经济趋势分析
+宏观指标、**四大央行**货币政策、贸易关系、大宗商品（油/金/铜）
 
-### 5. 股市影响分析
-- 整体市场影响
-- 机会板块（哪些板块受益）
-- 风险警示（哪些板块受损）
-- 关注的上市公司或行业
+### 第4章：地缘政治风险评估
+主要事件、升温信号、经济传导路径
 
-### 6. 未来预测（1-3个月）
-- 关键事件预判
-- 经济趋势预测
-- 投资建议
-- 需要监测的关键指标
+### 第5章：⚡ 黑天鹅事件预警与投资策略
 
-### 7. 行动建议
-- 投资组合调整建议
-- 风险对冲策略
-- 关注事项和时间节点
+> 对比今日新闻与过去5天历史，识别突发信号
+
+- **5.1** 近期已发生的黑天鹅/灰犀牛事件
+- **5.2** 潜在信号识别（军事/金融/政治/能源/科技 五维度）
+- **5.3** 黑天鹅风险评级矩阵（含概率、冲击、关注度）
+- **5.4** 🎯 **收益最大化投资策略**
+  - 事件前预防性布局（A股/美股/港股/日股 各自操作）
+  - 事件发生后 T+0~T+3 快速响应清单
+  - 潜在收益区间估算
+- **5.5** 通用黑天鹅对冲清单（黄金/美元/防御板块比例）
+
+### 第6章：中国A股专项分析
+沪深300/科创50走势、行业板块轮动、政策传导、黑天鹅冲击路径、具体股票池建议
+
+### 第7章：美股专项分析
+标普500/纳指/道指、Mag-7走势、能源/金融/军工/科技板块、ETF与期权方向建议
+
+### 第8章：港股专项分析
+恒生/恒生科技指数、南下资金、中概科技（腾讯/阿里等）、H股折价逻辑
+
+### 第9章：日本股市专项分析
+日经225/TOPIX、日元汇率影响、半导体设备（东京电子等）、日央行加息节奏
+
+### 第10章：未来预测（1-3个月）
+四大市场运行路径、黑天鹅概率变化趋势、关键时间节点日历
+
+### 第11章：综合行动建议
+- 四大市场仓位分配建议（A股/美股/港股/日股占比）
+- 黑天鹅对冲仓位
+- 近期关键操作（未来1-2周）
+- 风险警戒线
 
 **报告保存位置：**
 - JSON格式: `data/reports/report_*.json`
 - 文本格式: `data/reports/report_*.txt`
-- 邮件: HTML精美格式
+- 邮件: 完整 HTML 渲染（表格/粗体/引用块等）
+
+---
 
 ## ⚙️ 高级配置
+
+### 分析配置（`config.yaml`）
+
+```yaml
+analysis:
+  focus_areas:
+    - "全球经济趋势"
+    - "地缘政治风险"
+    - "黑天鹅事件预警与投资策略"
+    - "中国A股市场分析"
+    - "美股市场分析（标普500/纳斯达克/道琼斯）"
+    - "港股市场分析（恒生指数/恒生科技）"
+    - "日本股市分析（日经225/日元汇率）"
+    - "大宗商品价格（原油/黄金/铜）"
+    - "AI行业发展"
+    - "半导体产业链"
+  output_language: "zh-CN"
+  include_predictions: true
+  prediction_timeframe: "未来1-3个月"
+  include_a_share_analysis: true
+  a_share_focus:
+    - "沪深300指数趋势"
+    - "创业板/科创板机会"
+    - "行业板块轮动"
+    - "政策导向行业"
+    - "出口导向企业影响"
+    - "资金流向分析"
+```
 
 ### 调度配置
 
 ```yaml
 scheduler:
   enabled: true
-  run_time: "08:00"  # 每天运行时间（24小时制）
-  timezone: "Asia/Shanghai"  # 时区
+  run_time: "08:00"       # 每天运行时间（24小时制）
+  timezone: "Asia/Shanghai"
 ```
 
 ### 内容过滤
 
 ```yaml
 content_filter:
-  min_content_length: 100  # 最小内容长度
-  exclude_keywords:  # 排除包含这些关键词的文章
+  min_content_length: 100
+  exclude_keywords:
     - "horoscope"
     - "celebrity gossip"
     - "entertainment"
     - "sports"
-  include_keywords:  # 优先包含这些关键词的文章
+  include_keywords:
+    # 经济类
     - "economy"
     - "market"
     - "trade"
-    - "gdp"
     - "inflation"
-```
-
-### 分析配置
-
-```yaml
-analysis:
-  focus_areas:  # 分析重点
-    - "全球经济趋势"
-    - "地缘政治风险"
-    - "股市影响因素"
-    - "贸易关系变化"
-  output_language: "zh-CN"  # 输出语言
-  include_predictions: true  # 是否包含预测
-  prediction_timeframe: "未来1-3个月"  # 预测时间范围
+    # 黑天鹅类（新增）
+    - "strike"
+    - "attack"
+    - "military"
+    - "missile"
+    - "conflict"
+    - "war"
+    - "crisis"
+    - "coup"
+    - "nuclear"
+    - "escalation"
 ```
 
 ### 添加新的新闻源
@@ -395,9 +410,11 @@ analysis:
 ```yaml
 - name: "新的新闻源"
   url: "https://example.com/rss"
-  region: "asia"  # global, americas, europe, asia, russia, international
-  priority: 4  # 1-5，数字越大优先级越高
+  region: "middle_east"  # global, americas, europe, asia, russia, middle_east, international
+  priority: 5            # 1-5，数字越大优先级越高
 ```
+
+---
 
 ## 🛠️ 运维管理
 
@@ -407,18 +424,18 @@ analysis:
 # 实时查看日志
 tail -f logs/news_analyzer.log
 
-# 查看最近100行
-tail -100 logs/news_analyzer.log
+# 只看错误
+grep ERROR logs/news_analyzer.log
 ```
 
 ### 查看报告
 
 ```bash
-# 查看最新的文本报告
-cat data/reports/report_*.txt | tail -200
+# 查看最新文本报告
+ls -lt data/reports/*.txt | head -3
 
-# 查看JSON报告
-cat data/reports/report_*.json | jq .
+# 预览最新报告
+cat $(ls -t data/reports/*.txt | head -1) | head -100
 ```
 
 ### 测试邮件发送
@@ -429,24 +446,13 @@ cat data/reports/report_*.json | jq .
 
 ### 清理缓存
 
-系统会自动清理7天前的缓存，也可以手动清理：
+系统会自动清理超过配置天数的缓存，也可手动清理：
 
 ```bash
 rm -rf data/news_cache/*
 ```
 
-### 使用Cron定时运行
-
-如果不使用内置调度器，可以使用系统Cron：
-
-```bash
-crontab -e
-```
-
-添加以下行（每天8:00运行）：
-```
-0 8 * * * cd /Users/lhq/Develop/info-os/src && /usr/bin/python3 main.py >> /Users/lhq/Develop/info-os/logs/cron.log 2>&1
-```
+> ⚠️ 注意：手动清除后，下次运行将没有历史新闻参考数据，黑天鹅对比分析效果会下降。
 
 ### 后台运行调度器
 
@@ -460,144 +466,129 @@ ps aux | grep scheduler
 kill <PID>
 ```
 
+### 使用 Cron 定时运行
+
+```bash
+crontab -e
+```
+
+添加（每天8:00运行）：
+```
+0 8 * * * cd /path/to/info-os && .venv/bin/python3 src/main.py >> logs/cron.log 2>&1
+```
+
+---
+
 ## 🔍 常见问题
 
-### Q1: 邮件发送失败？
+### Q1: 邮件中的表格/粗体没有正常显示？
 
-**Gmail超时**: 
-- 网络无法访问Gmail SMTP
-- 需要配置代理或切换到QQ邮箱
+系统使用 `markdown` 库将 LLM 输出转换为 HTML。如果某些格式未渲染：
+- 检查 LLM 是否正确输出了 Markdown（查看 `data/reports/report_*.txt`）
+- 如果 LLM 将整个回复包在 ` ```markdown ``` ` 代码块里，系统会自动剥除
+- 确认 `requirements.txt` 中的 `markdown>=3.5` 已安装
 
-**认证失败**:
-- 确保使用授权码/应用专用密码，不是登录密码
-- Gmail需要先启用两步验证
+### Q2: 邮件发送失败？
 
-**解决方案**:
+**Gmail超时**: 网络无法访问 Gmail SMTP，建议切换到 QQ 邮箱
+
+**认证失败**: 确保使用授权码/应用专用密码，不是登录密码
+
 ```bash
-# 测试邮件
 .venv/bin/python3 src/test_email.py
-
-# 推荐切换到QQ邮箱（国内稳定）
 ```
 
-### Q2: 大模型API调用失败？
+### Q3: 黑天鹅章节内容空洞？
 
-检查：
-- API Key是否正确
-- 是否有足够配额
-- base_url是否正确（OpenAI兼容接口）
-- 网络连接是否正常
+黑天鹅分析依赖历史新闻对比。如果是首次运行或缓存被清除，历史数据为空，分析质量较低。建议运行几天后效果明显提升。
 
-### Q3: 没有抓取到新闻？
+### Q4: 大模型API调用失败？
 
-可能原因：
-- 网络连接问题
-- 某些国外RSS需要代理
-- News API配额用完
+- 检查 `config.yaml` 中 `api_key`、`base_url`、`model` 是否正确
+- 本地 Ollama：确认服务已启动（`ollama serve`）且模型已下载（`ollama pull qwen3.5:35b`）
+- 检查 `max_tokens` 是否超出模型限制
 
-解决方案：
+### Q5: 没有抓取到新闻？
+
 ```bash
-# 测试RSS源
+# 测试 RSS 源可用性
 .venv/bin/python3 src/test_rss_sources.py
 
-# 禁用News API，只用RSS
-# 在config.yaml中设置: news_api.enabled: false
+# 禁用 News API，只用 RSS
+# config.yaml: news_api.enabled: false
 ```
 
-### Q4: 报告质量不满意？
+### Q6: 报告内容质量不满意？
 
-调整分析配置：
-```yaml
-analysis:
-  focus_areas:
-    - "你关心的维度1"
-    - "你关心的维度2"
-```
+- 更换更强大的模型（如 GPT-4o 或 Claude-3.5-Sonnet）
+- 调整 `config.yaml` 的 `analysis.focus_areas`
+- 增加 `max_tokens` 以获得更长更详细的分析
 
-或更换更强大的大模型（如GPT-4）。
-
-### Q5: 如何查看错误详情？
-
-```bash
-# 查看日志
-tail -100 logs/news_analyzer.log
-
-# 运行配置测试
-.venv/bin/python3 src/test_config.py
-```
+---
 
 ## 💰 成本估算
 
 ### 免费资源
-- ✅ RSS Feed: 完全免费
-- ✅ News API: 免费版100次/天（足够使用）
-- ✅ 邮箱服务: 完全免费（QQ、Gmail、163等）
+- ✅ RSS Feed（32个源）: 完全免费
+- ✅ News API: 免费版100次/天（足够）
+- ✅ 邮箱服务: 完全免费
+- ✅ 本地 Ollama: 完全免费（需要本地GPU/CPU算力）
 
-### 付费资源
-- 大模型API（根据选择）:
-  - OpenAI GPT-4: 约¥0.2-0.4/次
-  - 讯飞星火: 约¥0.03-0.06/次
-  - Claude: 约¥0.15-0.3/次
+### 付费资源（按每次分析估算）
+| 模型 | 每次费用 | 月费用（每天1次） |
+|------|---------|----------------|
+| 本地 Ollama | 免费 | 免费 |
+| 讯飞星火 | ~¥0.03-0.06 | ~¥1-2 |
+| GPT-4o | ~¥0.3-0.6 | ~¥10-18 |
+| Claude 3.5 Sonnet | ~¥0.2-0.4 | ~¥6-12 |
 
-**预计月成本**: ¥1-12（每天运行一次，取决于选择的大模型）
+> 报告现在约 11 个完整章节，Token 消耗约 8,000-15,000/次（含历史新闻上下文）。
 
-推荐使用讯飞星火等国内模型，成本更低且速度快。
-
-## 📈 性能指标
-
-- **新闻抓取速度**: 约50秒（19个RSS + News API）
-- **AI分析速度**: 约49秒（讯飞星火x1）
-- **总耗时**: 约2分钟
-- **成功率**: 100%（RSS源全部可用）
-- **Token消耗**: 约5,000-6,000 tokens/次
+---
 
 ## ⚠️ 注意事项
 
 ### 1. 隐私安全
-- ⚠️ **不要将 `config.yaml` 提交到公开仓库**
-- API Key和密码都是敏感信息
+- ⚠️ **不要将 `config.yaml` 提交到公开仓库**（包含 API Key 和邮箱密码）
 - 已在 `.gitignore` 中配置忽略
 
-### 2. API限制
-- News API免费版: 100请求/天
-- 大模型API: 根据你的套餐限制
-- 邮箱: 避免频繁发送（建议每天1次）
+### 2. API 限制
+- News API 免费版：100请求/天
+- 邮箱：避免频繁发送（建议每天1次）
 
-### 3. 新闻源可靠性
-- 系统已配置权威媒体，排除了不可靠来源
-- 建议定期测试RSS源可用性
-- 如果某个源失效，及时替换
+### 3. 历史新闻缓存
+- 历史缓存存于 `data/news_cache/`，供黑天鹅信号对比使用
+- 默认保留360天，可通过 `storage.max_cache_days` 调整
+- 清除缓存会降低黑天鹅分析精度
 
 ### 4. 法律合规
 - 仅用于个人学习和研究
 - 遵守各新闻源的使用条款
-- 不用于商业目的或转发
+- 不用于商业目的或二次分发
+
+---
 
 ## 🤝 扩展开发
 
 ### 添加新的通知方式
 
-可以扩展 `email_sender.py`，添加：
-- Slack通知
-- 微信通知（企业微信webhook）
+扩展 `email_sender.py`：
 - Telegram Bot
+- 企业微信 Webhook
 - 钉钉通知
+- Slack
 
 ### 自定义分析维度
 
-修改 `config.yaml`:
-```yaml
-analysis:
-  focus_areas:
-    - "加密货币市场"
-    - "AI行业发展"
-    - "新能源汽车"
-    - "你关心的任何维度"
-```
+修改 `config.yaml` 的 `analysis.focus_areas`，或修改 `src/llm_analyzer.py` 的 `_build_system_prompt()` 调整报告章节结构。
 
-### 更换大模型
+### 集成实时社交媒体（进阶）
 
-修改 `llm_analyzer.py`，支持新的API接口。
+目前系统通过 RSS 获取新闻。如需更实时的黑天鹅预警，可扩展集成：
+- **Twitter/X API**（付费，$100/月 Basic）：监控 `@Reuters`、`@OSINTdefender` 等
+- **Telegram Bot API**（免费）：订阅 `@warmonitors`、`@intelrepublic` 等频道
+
+---
 
 ## 📝 维护建议
 
@@ -608,17 +599,13 @@ analysis:
 .venv/bin/python3 src/test_rss_sources.py
 ```
 
-2. **检查API配额**
-- News API使用量
-- 大模型API使用量
+2. **检查API配额**：News API 使用量、大模型 API 费用
 
-3. **审查报告质量**
-- 查看最近的分析报告
-- 根据需要调整配置
+3. **审查报告质量**：重点检查黑天鹅章节的信号识别是否准确
 
 4. **查看日志异常**
 ```bash
-grep ERROR logs/news_analyzer.log
+grep ERROR logs/news_analyzer.log | tail -20
 ```
 
 ### 备份重要数据
@@ -627,33 +614,26 @@ grep ERROR logs/news_analyzer.log
 # 备份配置
 cp config.yaml config.yaml.backup
 
-# 备份报告（可选）
+# 备份历史报告
 tar -czf reports_backup_$(date +%Y%m%d).tar.gz data/reports/
 ```
+
+---
 
 ## 📄 许可证
 
 MIT License - 可自由使用、修改和分发
 
-## 💬 联系方式
-
-如有问题或建议：
-- Email: haiqiang2linux@gmail.com
-- 查看日志: `logs/news_analyzer.log`
-- 运行测试: `python src/test_config.py`
-
 ---
 
 ## 🎉 开始使用
 
-现在你已经了解了所有内容，可以：
-
 1. ✅ 创建虚拟环境: `python3 -m venv .venv`
 2. ✅ 安装依赖: `.venv/bin/pip install -r requirements.txt`
 3. ✅ 配置邮箱: 编辑 `config.yaml`（推荐QQ邮箱）
-4. ✅ 配置大模型: 填入你的API Key
+4. ✅ 配置大模型: 填入API Key 或配置本地 Ollama
 5. ✅ 测试配置: `.venv/bin/python3 src/test_config.py`
 6. ✅ 立即运行: `.venv/bin/python3 src/main.py`
 7. ✅ 启动调度: `.venv/bin/python3 src/scheduler.py`
 
-**⚡️ 让AI帮你每天洞察世界，把握投资机会！**
+**⚡ 让AI帮你每天洞察世界，识别黑天鹅，把握四大市场投资机会！**

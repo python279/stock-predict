@@ -68,6 +68,7 @@ class NewsAnalyzerScheduler:
         
         # 设置定时任务
         schedule.every().day.at(self.run_time).do(self.run_task)
+        schedule.every().hour.at(":00").do(self.run_task)
         
         # 显示下次运行时间
         next_run = schedule.next_run()
