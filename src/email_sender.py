@@ -173,6 +173,7 @@ class EmailSender:
         articles_count = analysis_result.get('articles_count', 0)
         history_days = analysis_result.get('history_days', 0)
         history_count = analysis_result.get('history_articles_count', 0)
+        commodities_count = analysis_result.get('commodities_count', 0)
         regions = ', '.join(analysis_result.get('regions_covered', []))
         analysis_time = analysis_result.get('analysis_time', '')
 
@@ -353,6 +354,7 @@ class EmailSender:
                 <span class="meta-item">📅 {datetime.now().strftime('%Y年%m月%d日 %H:%M')}</span>
                 <span class="meta-item">📰 今日新闻: {articles_count} 篇</span>
                 {f'<span class="meta-item">📂 历史参考: {history_days} 天 / {history_count} 篇</span>' if history_days > 0 else ''}
+                {f'<span class="meta-item">📈 大宗商品: {commodities_count} 个</span>' if commodities_count > 0 else ''}
                 <span class="meta-item">🌍 覆盖地区: {regions}</span>
             </div>
         </div>

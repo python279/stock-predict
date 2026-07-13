@@ -66,7 +66,8 @@ class LLMAnalyzer:
     def analyze_news(
         self,
         articles: List[Any],
-        historical_news: Dict[str, List[Dict]] = None
+        historical_news: Dict[str, List[Dict]] = None,
+        commodity_data: Dict[str, Any] = None
     ) -> Dict[str, Any]:
         """
         分析新闻文章
@@ -75,6 +76,7 @@ class LLMAnalyzer:
             articles: 今日新闻文章列表（NewsArticle 对象）
             historical_news: 过去 N 天历史新闻，格式为
                              {'YYYY-MM-DD': [article_dict, ...], ...}
+            commodity_data: 大宗商品价格、趋势指标和可投资标的数据
 
         Returns:
             分析结果字典
@@ -85,7 +87,11 @@ class LLMAnalyzer:
 
         try:
             # 准备新闻摘要（今日 + 历史）
-            news_summary = self._prepare_news_summary(articles, historical_news or {})
+            news_summary = self._prepare_news_summary(
+                articles,
+                historical_news or {},
+                commodity_data or {}
+            )
 
             # 构建 system / user 两段提示词
             system_prompt = self._build_system_prompt()
@@ -97,12 +103,15 @@ class LLMAnalyzer:
             # 历史天数统计
             history_days = len(historical_news) if historical_news else 0
             history_count = sum(len(v) for v in historical_news.values()) if historical_news else 0
+            commodity_items = (commodity_data or {}).get('items', [])
 
             result = {
                 'analysis_time': datetime.now().isoformat(),
                 'articles_count': len(articles),
                 'history_days': history_days,
                 'history_articles_count': history_count,
+                'commodities_count': len(commodity_items),
+                'commodity_data': commodity_data or {},
                 'regions_covered': self._get_regions(articles),
                 'analysis': analysis_text,
                 'raw_articles': [article.to_dict() for article in articles[:10]],
@@ -122,7 +131,8 @@ class LLMAnalyzer:
     def _prepare_news_summary(
         self,
         articles: List[Any],
-        historical_news: Dict[str, List[Dict]] = None
+        historical_news: Dict[str, List[Dict]] = None,
+        commodity_data: Dict[str, Any] = None
     ) -> str:
         """
         准备新闻摘要，包含今日新闻和历史新闻，每条均标注日期
@@ -130,6 +140,7 @@ class LLMAnalyzer:
         Args:
             articles: 今日 NewsArticle 对象列表
             historical_news: {'YYYY-MM-DD': [article_dict,...]} 历史新闻字典
+            commodity_data: 大宗商品价格、趋势指标和投资标的数据
 
         Returns:
             带日期标注的完整新闻摘要文本
@@ -190,7 +201,83 @@ class LLMAnalyzer:
                             f"   摘要: {desc}...\n"
                         )
 
+        # ── 大宗商品价格与趋势数据 ─────────────────────────────────
+        if commodity_data and commodity_data.get('items'):
+            summary_parts.append(
+                "\n\n# 【大宗商品价格与趋势数据】"
+                "\n> 以下为程序抓取的商品日线价格和趋势指标。请结合新闻事件、"
+                "供需关系、美元利率和地缘政治进行预测，不要只机械外推价格。"
+            )
+            summary_parts.append(
+                "\n| 品种 | 价格日期 | 当前价 | 1日涨跌 | 5日涨跌 | 20日涨跌 | MA5 | MA20 | MA60 | 趋势信号 | 可投资标的 |"
+            )
+            summary_parts.append(
+                "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"
+            )
+
+            for item in commodity_data.get('items', []):
+                targets = self._format_investment_targets(
+                    item.get('investment_targets', {})
+                )
+                summary_parts.append(
+                    "| {name} | {date} | {price} {unit} | {chg1} | {chg5} | "
+                    "{chg20} | {ma5} | {ma20} | {ma60} | {signal} | {targets} |".format(
+                        name=item.get('name', ''),
+                        date=item.get('price_date', ''),
+                        price=self._format_number(item.get('price')),
+                        unit=item.get('unit', ''),
+                        chg1=self._format_pct(item.get('change_1d_pct')),
+                        chg5=self._format_pct(item.get('change_5d_pct')),
+                        chg20=self._format_pct(item.get('change_20d_pct')),
+                        ma5=self._format_number(item.get('ma5')),
+                        ma20=self._format_number(item.get('ma20')),
+                        ma60=self._format_number(item.get('ma60')),
+                        signal=item.get('trend_signal', '未知'),
+                        targets=targets,
+                    )
+                )
+
+            if commodity_data.get('errors'):
+                summary_parts.append(
+                    "\n> 部分商品抓取失败："
+                    + "；".join(commodity_data.get('errors', [])[:5])
+                )
+
         return "\n".join(summary_parts)
+
+    @staticmethod
+    def _format_number(value: Any) -> str:
+        """格式化数字，供 prompt 表格使用。"""
+        if value is None:
+            return "N/A"
+        try:
+            return f"{float(value):.2f}"
+        except (TypeError, ValueError):
+            return str(value)
+
+    @staticmethod
+    def _format_pct(value: Any) -> str:
+        """格式化百分比，供 prompt 表格使用。"""
+        if value is None:
+            return "N/A"
+        try:
+            return f"{float(value):+.2f}%"
+        except (TypeError, ValueError):
+            return str(value)
+
+    @staticmethod
+    def _format_investment_targets(targets: Dict[str, List[str]]) -> str:
+        """压缩可投资标的列表，避免 prompt 过长。"""
+        if not targets:
+            return "未配置"
+
+        parts = []
+        for market, items in targets.items():
+            if not items:
+                continue
+            clean_items = [str(item).replace("|", "/") for item in items[:4]]
+            parts.append(f"{market}: {'、'.join(clean_items)}")
+        return "；".join(parts) if parts else "未配置"
     
     def _build_system_prompt(self) -> str:
         """
@@ -255,9 +342,10 @@ class LLMAnalyzer:
 - 必须按以下章节结构输出完整报告，不得省略任何章节
 - 分析要客观、理性，严格基于所提供的新闻事实
 - 须区分短期波动与长期趋势，指出不确定性和多种可能性
-- 投资建议须具体可操作（给出具体板块、ETF、个股方向）
+- 投资建议须具体可操作（给出具体板块、ETF、个股、商品ETF/期货/期权工具方向）
 - A股分析须结合中国特色市场环境（政策市特征、北上资金、融资融券等）
 - 黑天鹅投资策略须兼顾防守（对冲）与进攻（收益最大化）两个维度
+- 大宗商品分析必须同时结合程序抓取的价格趋势数据与相关新闻驱动因素，避免只看单日涨跌
 
 ## 报告结构
 
@@ -286,6 +374,31 @@ class LLMAnalyzer:
 - 主要央行货币政策走向（美联储、欧央行、日央行、中国人民银行）
 - 贸易关系与关税动向
 - 大宗商品价格趋势（油、金、铜、天然气）
+
+### 3.5 大宗商品价格趋势预测与投资标的
+须基于【大宗商品价格与趋势数据】和今日/历史新闻综合判断，若价格数据缺失则明确说明并主要基于新闻推演。
+
+#### 3.5.1 商品趋势总览
+- 覆盖原油、天然气、黄金、白银、铜、农产品等已抓取品种
+- 对每个品种给出：当前趋势信号、未来1-3个月方向判断（上涨/震荡/下跌）、核心驱动因素、关键风险
+- 明确区分供给冲击、需求变化、美元/利率、地缘政治、库存周期等驱动
+
+#### 3.5.2 商品策略矩阵
+必须输出 Markdown 表格，至少包含以下列：
+
+| 品种 | 当前趋势 | 未来1-3个月预测 | 主要催化 | 受益资产/板块 | 具体投资标的 | 失效信号 | 风险控制 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+
+#### 3.5.3 具体投资标的清单
+- A股：给出可关注的商品相关股票/ETF/基金方向（如能源、有色、黄金、油气、农产品链），尽量写出代码或常用简称
+- 美股：给出相关 ETF、龙头股、商品生产商或期货相关工具（如 GLD、IAU、GDX、USO、UNG、CPER、DBA、XLE 等）
+- 港股：给出资源品、油气、黄金、有色及高股息能源方向标的
+- 日股：说明资源进口型/商社/能源相关标的受益或受损逻辑
+- 衍生品：如涉及期货/期权/杠杆 ETF，必须标明高风险、适用周期和止损条件
+
+#### 3.5.4 跨资产传导
+- 商品上涨或下跌如何影响通胀、央行政策、股市行业轮动、汇率和债券
+- 对 A股/美股/港股/日股分别指出最直接的受益与受损板块
 
 ### 4. 地缘政治风险评估
 - 主要地缘政治事件与升温信号
@@ -520,7 +633,7 @@ class LLMAnalyzer:
         """
         today_str = datetime.now().strftime('%Y-%m-%d')
 
-        return f"""请基于以下全球新闻数据，按照你的分析框架输出完整报告。
+        return f"""请基于以下全球新闻数据、历史新闻参考和大宗商品价格趋势数据，按照你的分析框架输出完整报告。
 
 今日日期：{today_str}
 
@@ -530,7 +643,7 @@ class LLMAnalyzer:
 
 ---
 
-请严格按照报告结构逐章输出分析，不要省略任何章节。**全程使用 Markdown 格式**，表格用 `| 列 |` 语法，重点用 `**粗体**`，列表前后留空行。"""
+请严格按照报告结构逐章输出分析，不要省略任何章节。**全程使用 Markdown 格式**，表格用 `| 列 |` 语法，重点用 `**粗体**`，列表前后留空行。大宗商品章节必须给出趋势预测、具体投资标的和风控条件。"""
     
     def _call_llm(self, system_prompt: str, user_prompt: str) -> str:
         """

@@ -12,6 +12,7 @@ from typing import Optional
 from config_loader import ConfigLoader
 from logger_config import setup_logger
 from news_fetcher import NewsFetcher
+from commodity_fetcher import CommodityFetcher
 from llm_analyzer import LLMAnalyzer
 from email_sender import EmailSender
 from data_storage import DataStorage
@@ -46,6 +47,7 @@ class NewsAnalyzerApp:
         # 初始化各个模块
         try:
             self.fetcher = NewsFetcher(self.config)
+            self.commodity_fetcher = CommodityFetcher(self.config)
             self.analyzer = LLMAnalyzer(self.config)
             self.email_sender = EmailSender(self.config)
             self.storage = DataStorage(self.config)
@@ -76,6 +78,15 @@ class NewsAnalyzerApp:
                 return False
             
             logger.info(f"成功抓取 {len(articles)} 篇文章")
+
+            # 1.5 抓取大宗商品价格与趋势
+            logger.info("步骤 1.5/5: 抓取大宗商品价格与趋势...")
+            commodity_data = self.commodity_fetcher.fetch_all_commodities()
+            commodity_count = len(commodity_data.get('items', []))
+            if commodity_count > 0:
+                logger.info(f"成功抓取 {commodity_count} 个大宗商品品种")
+            else:
+                logger.info("未抓取到大宗商品数据，将仅基于新闻进行商品分析")
             
             # 2. 保存新闻缓存
             logger.info("步骤 2/5: 保存新闻缓存...")
@@ -94,7 +105,11 @@ class NewsAnalyzerApp:
 
             # 3. 分析新闻
             logger.info("步骤 3/5: 使用大模型分析新闻...")
-            analysis_result = self.analyzer.analyze_news(articles, historical_news=historical_news)
+            analysis_result = self.analyzer.analyze_news(
+                articles,
+                historical_news=historical_news,
+                commodity_data=commodity_data,
+            )
             
             if not analysis_result or not analysis_result.get('analysis'):
                 logger.error("新闻分析失败")

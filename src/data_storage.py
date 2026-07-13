@@ -104,6 +104,7 @@ class DataStorage:
                 f.write(f"{'=' * 60}\n\n")
                 f.write(f"分析时间: {analysis_result.get('analysis_time', '')}\n")
                 f.write(f"文章数量: {analysis_result.get('articles_count', 0)}\n")
+                f.write(f"大宗商品数量: {analysis_result.get('commodities_count', 0)}\n")
                 f.write(f"覆盖地区: {', '.join(analysis_result.get('regions_covered', []))}\n\n")
                 f.write(f"{'=' * 60}\n\n")
                 f.write(analysis_result.get('analysis', ''))
