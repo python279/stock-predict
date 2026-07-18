@@ -9,10 +9,14 @@ import logging
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta, timezone
 import time
-from urllib.parse import urlparse
+from urllib.parse import urlencode
 import hashlib
 
 logger = logging.getLogger(__name__)
+
+
+class RateLimitError(Exception):
+    """外部新闻源返回 429 时中止该源的后续请求。"""
 
 
 class Article:
@@ -27,7 +31,9 @@ class Article:
         source: str,
         published_at: datetime,
         region: str = "unknown",
-        priority: int = 3
+        priority: int = 3,
+        tags: Optional[List[str]] = None,
+        headline_only: bool = False,
     ):
         self.title = title
         self.description = description
@@ -37,6 +43,8 @@ class Article:
         self.published_at = published_at
         self.region = region
         self.priority = priority
+        self.tags = tags or []
+        self.headline_only = headline_only
         self.id = self._generate_id()
     
     def _generate_id(self) -> str:
@@ -55,7 +63,9 @@ class Article:
             'source': self.source,
             'published_at': self.published_at.isoformat(),
             'region': self.region,
-            'priority': self.priority
+            'priority': self.priority,
+            'tags': self.tags,
+            'headline_only': self.headline_only,
         }
     
     def __repr__(self) -> str:
@@ -109,6 +119,24 @@ class NewsFetcher:
                 logger.info(f"从 RSS Feed 抓取到 {len(articles)} 篇文章")
             except Exception as e:
                 logger.error(f"从 RSS Feed 抓取失败: {e}")
+
+        # GDELT 是无需密钥的全球新闻索引，作为 NewsAPI 的免费补充。
+        if self.config.get('gdelt', {}).get('enabled', False):
+            try:
+                articles = self.fetch_from_gdelt()
+                all_articles.extend(articles)
+                logger.info(f"从 GDELT 抓取到 {len(articles)} 篇文章")
+            except Exception as e:
+                logger.error(f"从 GDELT 抓取失败: {e}")
+
+        # Google News RSS 无需密钥；只保留已配置的权威媒体名称。
+        if self.config.get('google_news', {}).get('enabled', False):
+            try:
+                articles = self.fetch_from_google_news()
+                all_articles.extend(articles)
+                logger.info(f"从 Google News RSS 抓取到 {len(articles)} 篇文章")
+            except Exception as e:
+                logger.error(f"从 Google News RSS 抓取失败: {e}")
         
         # 去重
         unique_articles = self._deduplicate_articles(all_articles)
@@ -145,6 +173,7 @@ class NewsFetcher:
         max_per_country = newsapi_config.get('max_articles_per_country', 5)
         
         base_url = "https://newsapi.org/v2/top-headlines"
+        rate_limited = False
         
         for country in countries:
             for category in categories:
@@ -168,11 +197,94 @@ class NewsFetcher:
                     
                     # 避免请求过快
                     time.sleep(0.5)
-                
+                except RateLimitError:
+                    rate_limited = True
+                    logger.warning(
+                        "NewsAPI 免费额度或速率已耗尽，停止本轮后续 NewsAPI 请求；"
+                        "将继续使用 RSS/GDELT。"
+                    )
+                    break
                 except Exception as e:
                     logger.error(f"抓取 News API ({country}/{category}) 失败: {e}")
                     continue
+            if rate_limited:
+                break
         
+        return articles
+
+    def fetch_from_google_news(self) -> List[Article]:
+        """抓取 Google News 搜索 RSS，仅作为权威源 RSS 的补充。"""
+        google_config = self.config.get('google_news', {})
+        trusted_sources = {
+            source.lower() for source in google_config.get('trusted_sources', [])
+        }
+        articles: List[Article] = []
+        for query in google_config.get('queries', []):
+            url = "https://news.google.com/rss/search?" + urlencode(
+                {
+                    'q': query,
+                    'hl': google_config.get('language', 'en-US'),
+                    'gl': google_config.get('country', 'US'),
+                    'ceid': google_config.get('ceid', 'US:en'),
+                }
+            )
+            feed = feedparser.parse(
+                url,
+                agent=self.user_agent,
+                request_headers={'User-Agent': self.user_agent},
+            )
+            if feed.bozo:
+                logger.warning("Google News RSS 解析警告: %s", feed.bozo_exception)
+            for entry in feed.entries[:google_config.get('max_records_per_query', 20)]:
+                source_data = entry.get('source', {}) or {}
+                source_name = (source_data.get('title') or '').strip()
+                if trusted_sources and source_name.lower() not in trusted_sources:
+                    continue
+                article = self._parse_google_news_entry(entry, source_name)
+                if article:
+                    articles.append(article)
+            time.sleep(0.3)
+        return articles
+
+    def fetch_from_gdelt(self) -> List[Article]:
+        """从免费 GDELT DOC API 抓取配置化的全球新闻标题。"""
+        gdelt_config = self.config.get('gdelt', {})
+        queries = gdelt_config.get('queries', [])
+        max_records = gdelt_config.get('max_records_per_query', 20)
+        timespan = gdelt_config.get('timespan', '1d')
+        domains = {
+            domain.lower().lstrip('.')
+            for domain in gdelt_config.get('trusted_domains', [])
+        }
+        articles: List[Article] = []
+
+        for query in queries:
+            try:
+                data = self._make_request(
+                    "https://api.gdeltproject.org/api/v2/doc/doc",
+                    params={
+                        'query': query,
+                        'mode': 'ArtList',
+                        'format': 'json',
+                        'maxrecords': max_records,
+                        'timespan': timespan,
+                    },
+                )
+            except RateLimitError as exc:
+                logger.warning("GDELT 触发限流，停止本轮后续 GDELT 查询: %s", exc)
+                break
+            if not data:
+                continue
+
+            for item in data.get('articles', []):
+                domain = (item.get('domain') or '').lower().lstrip('.')
+                if domains and not self._is_trusted_domain(domain, domains):
+                    continue
+                article = self._parse_gdelt_article(item)
+                if article:
+                    articles.append(article)
+            time.sleep(0.3)
+
         return articles
     
     def fetch_from_rss(self) -> List[Article]:
@@ -191,6 +303,7 @@ class NewsFetcher:
                 feed_url = source.get('url', '')
                 region = source.get('region', 'unknown')
                 priority = source.get('priority', 3)
+                source_tags = source.get('sectors', [])
                 
                 if not feed_url:
                     continue
@@ -208,7 +321,9 @@ class NewsFetcher:
                     logger.warning(f"RSS 解析警告 ({source_name}): {feed.bozo_exception}")
                 
                 for entry in feed.entries[:10]:  # 限制每个源的数量
-                    article = self._parse_rss_entry(entry, source_name, region, priority)
+                    article = self._parse_rss_entry(
+                        entry, source_name, region, priority, source_tags
+                    )
                     if article:
                         articles.append(article)
                 
@@ -277,7 +392,8 @@ class NewsFetcher:
         entry: Any,
         source: str,
         region: str,
-        priority: int
+        priority: int,
+        tags: Optional[List[str]] = None,
     ) -> Optional[Article]:
         """解析 RSS 条目"""
         try:
@@ -321,11 +437,75 @@ class NewsFetcher:
                 source=source,
                 published_at=published_at,
                 region=region,
-                priority=priority
+                priority=priority,
+                tags=tags,
             )
         
         except Exception as e:
             logger.error(f"解析 RSS 条目失败: {e}")
+            return None
+
+    def _parse_gdelt_article(self, item: Dict[str, Any]) -> Optional[Article]:
+        """解析 GDELT 标题索引；GDELT 不提供正文，明确标记为标题级数据。"""
+        try:
+            title = (item.get('title') or '').strip()
+            url = (item.get('url') or '').strip()
+            if not title or not url:
+                return None
+
+            seen_date = (item.get('seendate') or '').strip()
+            try:
+                published_at = datetime.strptime(
+                    seen_date[:14], '%Y%m%dT%H%M%S'
+                ).replace(tzinfo=timezone.utc)
+            except ValueError:
+                published_at = datetime.now(timezone.utc)
+
+            domain = (item.get('domain') or 'GDELT').strip()
+            language = (item.get('language') or '').strip()
+            description = f"GDELT 标题索引；来源域名：{domain}；语言：{language}"
+            return Article(
+                title=title,
+                description=description,
+                content=title,
+                url=url,
+                source=f"GDELT / {domain}",
+                published_at=published_at,
+                region=self._gdelt_region(item.get('sourcecountry')),
+                priority=4,
+                headline_only=True,
+            )
+        except Exception as e:
+            logger.warning(f"解析 GDELT 文章失败: {e}")
+            return None
+
+    def _parse_google_news_entry(
+        self, entry: Any, source_name: str
+    ) -> Optional[Article]:
+        """解析 Google News RSS 聚合标题，不将其摘要伪装成原文正文。"""
+        try:
+            title = (entry.get('title') or '').strip()
+            url = (entry.get('link') or '').strip()
+            if not title or not url:
+                return None
+            published_at = datetime.now(timezone.utc)
+            if entry.get('published_parsed'):
+                published_at = datetime(
+                    *entry.published_parsed[:6], tzinfo=timezone.utc
+                )
+            return Article(
+                title=title,
+                description=f"Google News RSS 标题索引；来源：{source_name or '未知'}",
+                content=title,
+                url=url,
+                source=f"Google News / {source_name or '未知'}",
+                published_at=published_at,
+                region='global',
+                priority=4,
+                headline_only=True,
+            )
+        except Exception as e:
+            logger.warning("解析 Google News RSS 文章失败: %s", e)
             return None
     
     def _make_request(self, url: str, params: Optional[Dict] = None) -> Optional[Dict]:
@@ -342,8 +522,15 @@ class NewsFetcher:
         for attempt in range(self.retry_attempts):
             try:
                 response = self.session.get(url, params=params, timeout=self.timeout)
+                if response.status_code == 429:
+                    retry_after = response.headers.get('Retry-After')
+                    wait_hint = f"，Retry-After={retry_after}" if retry_after else ""
+                    raise RateLimitError(f"HTTP 429{wait_hint}")
                 response.raise_for_status()
                 return response.json()
+
+            except RateLimitError:
+                raise
             
             except requests.exceptions.RequestException as e:
                 logger.warning(f"请求失败 (尝试 {attempt + 1}/{self.retry_attempts}): {e}")
@@ -381,10 +568,11 @@ class NewsFetcher:
         min_length = self.content_filter.get('min_content_length', 100)
         exclude_keywords = self.content_filter.get('exclude_keywords', [])
         include_keywords = self.content_filter.get('include_keywords', [])
+        sector_keywords = self.content_filter.get('sector_keywords', {})
         
         for article in articles:
             # 检查最小长度
-            if len(article.content) < min_length:
+            if len(article.content) < min_length and not article.headline_only:
                 continue
             
             # 检查排除关键词
@@ -396,10 +584,48 @@ class NewsFetcher:
             if any(keyword.lower() in text_lower for keyword in include_keywords):
                 article.priority += 1
             
+            sector_tags = self._tag_article(text_lower, sector_keywords)
+            if sector_tags:
+                article.tags = sorted(set(article.tags).union(sector_tags))
+                # 行业命中比泛关键词更重要，但避免大量标签造成不成比例加权。
+                article.priority += min(len(sector_tags), 2)
+            
             filtered.append(article)
         
         # 按优先级和时间排序
         filtered.sort(key=lambda x: (x.priority, x.published_at), reverse=True)
         
         return filtered
+
+    @staticmethod
+    def _is_trusted_domain(domain: str, trusted_domains: set) -> bool:
+        """允许白名单域名及其子域名，避免 GDELT 的聚合噪声进入报告。"""
+        return any(domain == item or domain.endswith(f".{item}") for item in trusted_domains)
+
+    @staticmethod
+    def _gdelt_region(source_country: Any) -> str:
+        """将 GDELT 来源国家粗略映射到现有报告区域。"""
+        country = str(source_country or '').upper()
+        if country in {'US', 'CA', 'MX', 'BR'}:
+            return 'americas'
+        if country in {'GB', 'DE', 'FR', 'IT', 'ES', 'EU'}:
+            return 'europe'
+        if country in {'RU', 'UA'}:
+            return 'russia'
+        if country in {'CN', 'JP', 'KR', 'SG', 'IN', 'TH', 'ID'}:
+            return 'asia'
+        if country in {'IR', 'IL', 'SA', 'AE', 'TR'}:
+            return 'middle_east'
+        return 'global'
+
+    @staticmethod
+    def _tag_article(
+        text_lower: str, sector_keywords: Dict[str, List[str]]
+    ) -> List[str]:
+        """按配置关键词为文章打可叠加的行业/政策标签。"""
+        tags = []
+        for tag, keywords in sector_keywords.items():
+            if any(str(keyword).lower() in text_lower for keyword in keywords):
+                tags.append(tag)
+        return tags
 

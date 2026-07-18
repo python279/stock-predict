@@ -27,6 +27,7 @@ class DataStorage:
         self.save_raw_news = storage_config.get('save_raw_news', True)
         self.news_cache_dir = storage_config.get('news_cache_dir', 'data/news_cache')
         self.reports_dir = storage_config.get('reports_dir', 'data/reports')
+        self.market_cache_dir = storage_config.get('market_cache_dir', 'data/market_cache')
         self.max_cache_days = storage_config.get('max_cache_days', 7)
         
         # 创建目录
@@ -34,7 +35,7 @@ class DataStorage:
     
     def _ensure_directories(self):
         """确保必要的目录存在"""
-        for directory in [self.news_cache_dir, self.reports_dir]:
+        for directory in [self.news_cache_dir, self.reports_dir, self.market_cache_dir]:
             if not os.path.exists(directory):
                 os.makedirs(directory, exist_ok=True)
                 logger.info(f"创建目录: {directory}")
@@ -51,7 +52,6 @@ class DataStorage:
         """
         if not self.save_raw_news or not articles:
             return ""
-        
         try:
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             filename = f"news_{timestamp}.json"
@@ -68,9 +68,34 @@ class DataStorage:
             
             logger.info(f"保存新闻缓存: {filepath}")
             return filepath
-        
         except Exception as e:
             logger.error(f"保存新闻缓存失败: {e}")
+            return ""
+
+    def save_market_cache(
+        self,
+        market_data: Dict[str, Any],
+        sentiment_data: Dict[str, Any],
+    ) -> str:
+        """保存本次市场、政策/新闻情绪快照，供审计和后续扩展使用。"""
+        try:
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            filepath = os.path.join(self.market_cache_dir, f"market_{timestamp}.json")
+            with open(filepath, 'w', encoding='utf-8') as file:
+                json.dump(
+                    {
+                        'timestamp': datetime.now().isoformat(),
+                        'market_data': market_data,
+                        'sentiment_data': sentiment_data,
+                    },
+                    file,
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            logger.info(f"保存市场缓存: {filepath}")
+            return filepath
+        except Exception as e:
+            logger.error(f"保存市场缓存失败: {e}")
             return ""
     
     def save_analysis_report(self, analysis_result: Dict[str, Any]) -> str:
@@ -105,6 +130,7 @@ class DataStorage:
                 f.write(f"分析时间: {analysis_result.get('analysis_time', '')}\n")
                 f.write(f"文章数量: {analysis_result.get('articles_count', 0)}\n")
                 f.write(f"大宗商品数量: {analysis_result.get('commodities_count', 0)}\n")
+                f.write(f"市场行情数量: {analysis_result.get('market_items_count', 0)}\n")
                 f.write(f"覆盖地区: {', '.join(analysis_result.get('regions_covered', []))}\n\n")
                 f.write(f"{'=' * 60}\n\n")
                 f.write(analysis_result.get('analysis', ''))
@@ -162,25 +188,21 @@ class DataStorage:
     def clean_old_cache(self):
         """清理过期的缓存文件"""
         try:
-            if not os.path.exists(self.news_cache_dir):
-                return
-            
             cutoff_date = datetime.now() - timedelta(days=self.max_cache_days)
             deleted_count = 0
-            
-            for filename in os.listdir(self.news_cache_dir):
-                filepath = os.path.join(self.news_cache_dir, filename)
-                
-                if not os.path.isfile(filepath):
+
+            for directory in [self.news_cache_dir, self.market_cache_dir]:
+                if not os.path.exists(directory):
                     continue
-                
-                # 检查文件修改时间
-                file_mtime = datetime.fromtimestamp(os.path.getmtime(filepath))
-                
-                if file_mtime < cutoff_date:
-                    os.remove(filepath)
-                    deleted_count += 1
-                    logger.debug(f"删除过期缓存: {filename}")
+                for filename in os.listdir(directory):
+                    filepath = os.path.join(directory, filename)
+                    if not os.path.isfile(filepath):
+                        continue
+                    file_mtime = datetime.fromtimestamp(os.path.getmtime(filepath))
+                    if file_mtime < cutoff_date:
+                        os.remove(filepath)
+                        deleted_count += 1
+                        logger.debug(f"删除过期缓存: {filename}")
             
             if deleted_count > 0:
                 logger.info(f"清理了 {deleted_count} 个过期缓存文件")
@@ -239,7 +261,9 @@ class DataStorage:
                 )
 
             # 每天取最新文件，限制每天最多 25 篇
-            max_per_day = 25
+            max_per_day = self.config.get('storage', {}).get(
+                'historical_news_max_per_day', 25
+            )
             for file_date in sorted(date_files.keys(), reverse=True):
                 # 取当天最新文件（按文件名字典序最大即最新）
                 latest_file = sorted(date_files[file_date])[-1]

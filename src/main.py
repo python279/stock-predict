@@ -13,6 +13,8 @@ from config_loader import ConfigLoader
 from logger_config import setup_logger
 from news_fetcher import NewsFetcher
 from commodity_fetcher import CommodityFetcher
+from market_data_fetcher import MarketDataFetcher
+from sentiment_fetcher import SentimentFetcher
 from llm_analyzer import LLMAnalyzer
 from email_sender import EmailSender
 from data_storage import DataStorage
@@ -48,6 +50,8 @@ class NewsAnalyzerApp:
         try:
             self.fetcher = NewsFetcher(self.config)
             self.commodity_fetcher = CommodityFetcher(self.config)
+            self.market_data_fetcher = MarketDataFetcher(self.config)
+            self.sentiment_fetcher = SentimentFetcher(self.config)
             self.analyzer = LLMAnalyzer(self.config)
             self.email_sender = EmailSender(self.config)
             self.storage = DataStorage(self.config)
@@ -88,13 +92,24 @@ class NewsAnalyzerApp:
             else:
                 logger.info("未抓取到大宗商品数据，将仅基于新闻进行商品分析")
             
-            # 2. 保存新闻缓存
+            # 1.6 抓取美股/A股市场与行业趋势
+            logger.info("步骤 1.6/5: 抓取市场与行业行情...")
+            market_data = self.market_data_fetcher.fetch_all_markets()
+            logger.info("成功抓取 %d 个市场资产", len(market_data.get("items", [])))
+
+            # 1.7 汇总行业舆情
+            logger.info("步骤 1.7/5: 汇总行业舆情...")
+            sentiment_data = self.sentiment_fetcher.fetch(articles, market_data)
+
+            # 2. 保存新闻和市场缓存
             logger.info("步骤 2/5: 保存新闻缓存...")
             self.storage.save_news_cache(articles)
+            self.storage.save_market_cache(market_data, sentiment_data)
 
-            # 2.5 加载过去5天历史新闻（用于黑天鹅对比分析）
-            logger.info("步骤 2.5/5: 加载历史新闻缓存（过去5天）...")
-            historical_news = self.storage.load_historical_news_cache(days=5)
+            # 2.5 加载配置的历史新闻窗口（用于黑天鹅对比分析）
+            history_days = self.config.get("storage", {}).get("historical_news_days", 5)
+            logger.info("步骤 2.5/5: 加载历史新闻缓存（过去%d天）...", history_days)
+            historical_news = self.storage.load_historical_news_cache(days=history_days)
             if historical_news:
                 logger.info(
                     f"已加载 {len(historical_news)} 天历史数据: "
@@ -109,6 +124,8 @@ class NewsAnalyzerApp:
                 articles,
                 historical_news=historical_news,
                 commodity_data=commodity_data,
+                market_data=market_data,
+                sentiment_data=sentiment_data,
             )
             
             if not analysis_result or not analysis_result.get('analysis'):

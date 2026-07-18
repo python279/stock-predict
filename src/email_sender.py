@@ -382,6 +382,7 @@ class EmailSender:
         预处理：
           - 剥除 LLM 偶尔在回复外层包裹的 ```markdown ... ``` 代码围栏
           - 修正表格表头行与分隔行被粘在同一行的情况（表末 `|` 后误接 `|----|...`）
+          - 将偶发的 LaTeX 事件传导箭头转换为普通 Unicode 箭头
           - 去除首尾多余空白
 
         启用扩展（via `extra` 包 + 单独扩展）：
@@ -408,6 +409,24 @@ class EmailSender:
             r'\1',
             text,
             flags=re.MULTILINE,
+        )
+
+        # 模型偶尔违反 prompt 使用 `$A \rightarrow B$` 或 `\(A \to B\)`。
+        # 邮件渲染器不加载 MathJax，故保留文本并转换箭头，而不是显示原始 LaTeX。
+        def normalize_inline_math(match: re.Match) -> str:
+            value = match.group(1)
+            value = value.replace(r'\rightarrow', '→').replace(r'\to', '→')
+            value = re.sub(r'\\text\{([^{}]*)\}', r'\1', value)
+            return value
+
+        text = re.sub(r'(?<!\\)\$([^$\n]+)\$', normalize_inline_math, text)
+        text = re.sub(r'\\\(([^)\n]+)\\\)', normalize_inline_math, text)
+
+        # 上述传导链若被四个空格缩进，Markdown 会将其当作代码块。
+        text = re.sub(
+            r'(?m)^ {4,}(?=[^\n]*(?:→|\\(?:to|rightarrow)))',
+            '',
+            text,
         )
 
         # 表头最后一格「| … |」与分隔行「|---|…」被模型输出在同一行时，GFM 表格无法解析

@@ -21,6 +21,8 @@ llm:
   base_url: ""  # OpenAI兼容接口的base_url，如使用OpenAI官方可留空
   max_tokens: 4000
   temperature: 0.7
+  timeout_seconds: 1800  # 本地模型处理长上下文时允许最多等待30分钟
+  max_retries: 1  # 超时后只重试一次，避免任务长时间堆积
 
 # News API配置
 news_api:
@@ -30,6 +32,45 @@ news_api:
   categories: ["business", "technology", "general"]
   page_size: 10
   max_articles_per_country: 10
+
+# 免费、无需 API Key 的全球新闻索引。仅保留白名单媒体，并作为 RSS 的补充。
+gdelt:
+  enabled: true
+  timespan: "1d"
+  max_records_per_query: 20
+  queries:
+    - "(economy OR market OR inflation OR \"interest rate\")"
+    - "(semiconductor OR chip OR AI OR memory OR storage)"
+    - "(bank OR credit OR liquidity OR consumer OR retail)"
+  trusted_domains:
+    - "reuters.com"
+    - "bbc.com"
+    - "ft.com"
+    - "apnews.com"
+    - "cnbc.com"
+    - "npr.org"
+    - "theguardian.com"
+    - "federalreserve.gov"
+
+# Google News 搜索 RSS：免费无需密钥，仅接受媒体名称白名单。
+google_news:
+  enabled: true
+  language: "en-US"
+  country: "US"
+  ceid: "US:en"
+  max_records_per_query: 20
+  queries:
+    - "global economy markets"
+    - "semiconductor AI memory storage"
+    - "banking credit consumer retail"
+  trusted_sources:
+    - "Reuters"
+    - "BBC"
+    - "Financial Times"
+    - "Associated Press"
+    - "CNBC"
+    - "NPR"
+    - "The Guardian"
 
 # RSS Feed配置
 rss_feeds:
@@ -122,6 +163,11 @@ rss_feeds:
       url: "https://www.imf.org/en/News/rss"
       region: "international"
       priority: 4
+    - name: "Federal Reserve Press"
+      url: "https://www.federalreserve.gov/feeds/press_all.xml"
+      region: "americas"
+      priority: 5
+      sectors: ["finance", "policy"]
 
 # 新闻抓取配置
 fetcher:
@@ -153,6 +199,108 @@ content_filter:
     - "stock"
     - "AI"
     - "IT"
+    - "semiconductor"
+    - "chip"
+    - "memory"
+    - "storage"
+    - "HBM"
+    - "bank"
+    - "credit"
+    - "interest rate"
+    - "consumer"
+    - "retail"
+    - "证监会"
+    - "人民银行"
+    - "工信部"
+  sector_keywords:
+    tech: ["AI", "semiconductor", "chip", "memory", "storage", "HBM", "算力", "芯片", "半导体", "存储"]
+    finance: ["bank", "banking", "credit", "interest rate", "liquidity", "银行", "券商", "保险", "降准", "降息"]
+    consumer: ["consumer", "retail", "consumer spending", "消费", "零售", "社零", "以旧换新", "食品饮料"]
+    policy: ["policy", "regulation", "Federal Reserve", "PBOC", "CSRC", "政策", "监管", "证监会", "人民银行", "工信部"]
+
+# 美股和 A 股行业行情。A 股代码使用腾讯日线代码与东财 secid 的组合。
+markets:
+  enabled: true
+  historical_days: 90
+  timeout_seconds: 20
+  retry_attempts: 2
+  retry_delay_seconds: 2
+  assets:
+    - name: "标普500ETF"
+      symbol: "SPY"
+      provider: "yahoo"
+      market: "US"
+      sector: "broad"
+    - name: "纳斯达克100ETF"
+      symbol: "QQQ"
+      provider: "yahoo"
+      market: "US"
+      sector: "tech"
+    - name: "美国半导体ETF"
+      symbol: "SMH"
+      provider: "yahoo"
+      market: "US"
+      sector: "tech"
+    - name: "美国金融ETF"
+      symbol: "XLF"
+      provider: "yahoo"
+      market: "US"
+      sector: "finance"
+    - name: "美国必需消费ETF"
+      symbol: "XLP"
+      provider: "yahoo"
+      market: "US"
+      sector: "consumer"
+    - name: "美国可选消费ETF"
+      symbol: "XLY"
+      provider: "yahoo"
+      market: "US"
+      sector: "consumer"
+    - name: "VIX恐慌指数"
+      symbol: "^VIX"
+      provider: "yahoo"
+      market: "US"
+      sector: "risk"
+    - name: "沪深300"
+      symbol: "000300"
+      tencent_symbol: "sh000300"
+      secid: "1.000300"
+      provider: "eastmoney"
+      market: "CN"
+      sector: "broad"
+    - name: "科创50"
+      symbol: "000688"
+      tencent_symbol: "sh000688"
+      secid: "1.000688"
+      provider: "eastmoney"
+      market: "CN"
+      sector: "tech"
+    - name: "半导体ETF"
+      symbol: "512480.SS"
+      provider: "yahoo"
+      market: "CN"
+      sector: "tech"
+    - name: "银行ETF"
+      symbol: "512800.SS"
+      provider: "yahoo"
+      market: "CN"
+      sector: "finance"
+    - name: "消费ETF"
+      symbol: "159928.SZ"
+      provider: "yahoo"
+      market: "CN"
+      sector: "consumer"
+
+# 默认用权威新闻与市场相对强弱生成行业情绪摘要。
+# 股吧抓取为可选功能，请确认数据源条款后才启用并配置代码。
+sentiment:
+  enabled: true
+  guba_enabled: false
+  timeout_seconds: 15
+  guba_codes:
+    tech: []
+    finance: []
+    consumer: []
 
 # 分析配置
 analysis:
@@ -172,6 +320,11 @@ analysis:
   include_predictions: true  # 是否包含预测
   prediction_timeframe: "未来1-3个月"  # 预测时间范围
   include_a_share_analysis: true  # 是否包含A股专项分析
+  short_term_timeframes: ["未来5个交易日", "未来1-4周"]
+  us_market_focus:
+    - "科技/AI/半导体与存储"
+    - "金融与利率传导"
+    - "必需及可选消费"
   a_share_focus:
     - "沪深300指数趋势"
     - "创业板/科创板机会"
@@ -179,6 +332,9 @@ analysis:
     - "政策导向行业"
     - "出口导向企业影响"
     - "资金流向分析"
+    - "芯片/AI/存储产业链"
+    - "银行/券商/保险"
+    - "必需消费与可选消费"
 
 # 日志配置
 logging:
@@ -199,5 +355,8 @@ storage:
   save_raw_news: true
   news_cache_dir: "data/news_cache"
   reports_dir: "data/reports"
+  market_cache_dir: "data/market_cache"
+  historical_news_days: 14
+  historical_news_max_per_day: 25
   max_cache_days: 360  # 缓存保留天数
 

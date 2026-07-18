@@ -31,6 +31,8 @@ class LLMAnalyzer:
         self.base_url = self.llm_config.get('base_url', '')
         self.max_tokens = self.llm_config.get('max_tokens', 4000)
         self.temperature = self.llm_config.get('temperature', 0.7)
+        self.timeout_seconds = self.llm_config.get('timeout_seconds', 600)
+        self.max_retries = self.llm_config.get('max_retries', 2)
         
         self.client = None
         self._initialize_client()
@@ -44,16 +46,26 @@ class LLMAnalyzer:
                 if self.base_url:
                     self.client = OpenAI(
                         api_key=self.api_key,
-                        base_url=self.base_url
+                        base_url=self.base_url,
+                        timeout=self.timeout_seconds,
+                        max_retries=self.max_retries,
                     )
                 else:
-                    self.client = OpenAI(api_key=self.api_key)
+                    self.client = OpenAI(
+                        api_key=self.api_key,
+                        timeout=self.timeout_seconds,
+                        max_retries=self.max_retries,
+                    )
                 
                 logger.info(f"初始化 OpenAI 客户端成功 (model: {self.model})")
             
             elif self.provider == 'anthropic':
                 from anthropic import Anthropic
-                self.client = Anthropic(api_key=self.api_key)
+                self.client = Anthropic(
+                    api_key=self.api_key,
+                    timeout=self.timeout_seconds,
+                    max_retries=self.max_retries,
+                )
                 logger.info(f"初始化 Anthropic 客户端成功 (model: {self.model})")
             
             else:
@@ -67,7 +79,9 @@ class LLMAnalyzer:
         self,
         articles: List[Any],
         historical_news: Dict[str, List[Dict]] = None,
-        commodity_data: Dict[str, Any] = None
+        commodity_data: Dict[str, Any] = None,
+        market_data: Dict[str, Any] = None,
+        sentiment_data: Dict[str, Any] = None,
     ) -> Dict[str, Any]:
         """
         分析新闻文章
@@ -77,6 +91,8 @@ class LLMAnalyzer:
             historical_news: 过去 N 天历史新闻，格式为
                              {'YYYY-MM-DD': [article_dict, ...], ...}
             commodity_data: 大宗商品价格、趋势指标和可投资标的数据
+            market_data: 美股/A股指数及行业趋势数据
+            sentiment_data: 按行业聚合的新闻/舆情摘要
 
         Returns:
             分析结果字典
@@ -90,7 +106,9 @@ class LLMAnalyzer:
             news_summary = self._prepare_news_summary(
                 articles,
                 historical_news or {},
-                commodity_data or {}
+                commodity_data or {},
+                market_data or {},
+                sentiment_data or {},
             )
 
             # 构建 system / user 两段提示词
@@ -104,6 +122,7 @@ class LLMAnalyzer:
             history_days = len(historical_news) if historical_news else 0
             history_count = sum(len(v) for v in historical_news.values()) if historical_news else 0
             commodity_items = (commodity_data or {}).get('items', [])
+            market_items = (market_data or {}).get('items', [])
 
             result = {
                 'analysis_time': datetime.now().isoformat(),
@@ -112,6 +131,9 @@ class LLMAnalyzer:
                 'history_articles_count': history_count,
                 'commodities_count': len(commodity_items),
                 'commodity_data': commodity_data or {},
+                'market_items_count': len(market_items),
+                'market_data': market_data or {},
+                'sentiment_data': sentiment_data or {},
                 'regions_covered': self._get_regions(articles),
                 'analysis': analysis_text,
                 'raw_articles': [article.to_dict() for article in articles[:10]],
@@ -132,7 +154,9 @@ class LLMAnalyzer:
         self,
         articles: List[Any],
         historical_news: Dict[str, List[Dict]] = None,
-        commodity_data: Dict[str, Any] = None
+        commodity_data: Dict[str, Any] = None,
+        market_data: Dict[str, Any] = None,
+        sentiment_data: Dict[str, Any] = None,
     ) -> str:
         """
         准备新闻摘要，包含今日新闻和历史新闻，每条均标注日期
@@ -141,6 +165,8 @@ class LLMAnalyzer:
             articles: 今日 NewsArticle 对象列表
             historical_news: {'YYYY-MM-DD': [article_dict,...]} 历史新闻字典
             commodity_data: 大宗商品价格、趋势指标和投资标的数据
+            market_data: 美股/A股指数及行业趋势数据
+            sentiment_data: 按行业聚合的新闻/舆情摘要
 
         Returns:
             带日期标注的完整新闻摘要文本
@@ -243,6 +269,70 @@ class LLMAnalyzer:
                     + "；".join(commodity_data.get('errors', [])[:5])
                 )
 
+        # ── 美股/A股行业行情 ───────────────────────────────────────
+        if market_data and market_data.get('items'):
+            summary_parts.append(
+                "\n\n# 【美股与A股市场/行业趋势数据】"
+                "\n> 行情为程序抓取的日线数据。分析时必须标注数据日期；"
+                "不得把过期收盘数据表述为盘中实时行情。"
+            )
+            summary_parts.append(
+                "\n| 市场 | 行业 | 标的 | 数据日期 | 收盘价 | 1日 | 5日 | 20日 | 20日回撤 | 波动率 | 量能比 | 趋势 | 风险等级 |"
+            )
+            summary_parts.append(
+                "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"
+            )
+            for item in market_data.get('items', []):
+                summary_parts.append(
+                    "| {market} | {sector} | {name} | {date} | {price} | {chg1} | "
+                    "{chg5} | {chg20} | {drawdown} | {volatility} | {volume_ratio} | "
+                    "{trend} | {risk_level} |".format(
+                        market=item.get('market', ''),
+                        sector=item.get('sector', ''),
+                        name=item.get('name', ''),
+                        date=item.get('price_date', ''),
+                        price=self._format_number(item.get('price')),
+                        chg1=self._format_pct(item.get('change_1d_pct')),
+                        chg5=self._format_pct(item.get('change_5d_pct')),
+                        chg20=self._format_pct(item.get('change_20d_pct')),
+                        drawdown=self._format_pct(item.get('drawdown_20d_pct')),
+                        volatility=self._format_pct(item.get('volatility_20d_pct')),
+                        volume_ratio=self._format_number(item.get('volume_ratio_20d')),
+                        trend=item.get('trend_signal', '未知'),
+                        risk_level=item.get('risk_level', '待评估'),
+                    )
+                )
+            if market_data.get('errors'):
+                summary_parts.append(
+                    "\n> 部分市场数据抓取失败：" + "；".join(market_data['errors'][:5])
+                )
+
+        # ── 行业舆情摘要 ───────────────────────────────────────────
+        if sentiment_data and sentiment_data.get('items'):
+            summary_parts.append(
+                "\n\n# 【行业舆情摘要】"
+                "\n> 此摘要基于新闻标题及可选的公开社区标题，样本小或来源缺失时"
+                "只能作为关注度信号，不能当作真实资金流或投资者整体情绪。"
+            )
+            summary_parts.append(
+                "\n| 行业 | 样本量 | 新闻/社区样本 | 正/负面词命中 | 判断 | 主要主题 |"
+            )
+            summary_parts.append("| --- | --- | --- | --- | --- | --- |")
+            for item in sentiment_data.get('items', []):
+                summary_parts.append(
+                    "| {sector} | {sample_size} | {news}/{guba} | {positive}/{negative} | "
+                    "{sentiment} | {topics} |".format(
+                        sector=item.get('sector', ''),
+                        sample_size=item.get('sample_size', 0),
+                        news=item.get('news_sample_size', 0),
+                        guba=item.get('guba_sample_size', 0),
+                        positive=item.get('positive_titles', 0),
+                        negative=item.get('negative_titles', 0),
+                        sentiment=item.get('sentiment', ''),
+                        topics="、".join(item.get('topics', [])[:5]),
+                    )
+                )
+
         return "\n".join(summary_parts)
 
     @staticmethod
@@ -304,8 +394,15 @@ class LLMAnalyzer:
         focus_areas = self.analysis_config.get('focus_areas', [])
         output_language = self.analysis_config.get('output_language', 'zh-CN')
         include_predictions = self.analysis_config.get('include_predictions', True)
+        include_a_share_analysis = self.analysis_config.get(
+            'include_a_share_analysis', True
+        )
         prediction_timeframe = self.analysis_config.get('prediction_timeframe', '未来1-3个月')
+        short_term_timeframes = self.analysis_config.get(
+            'short_term_timeframes', ['未来5个交易日', '未来1-4周']
+        )
         a_share_focus = self.analysis_config.get('a_share_focus', [])
+        us_market_focus = self.analysis_config.get('us_market_focus', [])
         if not a_share_focus:
             a_share_focus = [
                 "沪深300指数趋势",
@@ -317,6 +414,8 @@ class LLMAnalyzer:
             ]
 
         focus_areas_text = "\n".join([f"- {area}" for area in focus_areas])
+        short_term_text = "、".join(short_term_timeframes)
+        us_market_focus_text = "\n".join([f"  - {item}" for item in us_market_focus])
 
         system = f"""你是一位资深的国际时事和金融分析专家，精通全球股市（A股、美股、港股、日股）与黑天鹅事件投资策略。
 
@@ -335,6 +434,7 @@ class LLMAnalyzer:
 - 风险评级矩阵等结构化数据**必须使用 Markdown 表格**（`| 列1 | 列2 |` 格式）
 - 引用/定义/注意事项使用 `> 引用块` 格式
 - 不要输出 HTML 标签，不要使用 LaTeX，不要使用代码块包裹分析文本
+- **禁止**输出 `$...$`、`\\(...\\)`、`\\[...\\]`、`\\rightarrow` 等 LaTeX/数学公式语法；事件传导链必须直接使用 Unicode 箭头 `→`
 - 不要在报告开头和结尾添加额外的说明性语句
 
 ### 内容要求
@@ -346,6 +446,8 @@ class LLMAnalyzer:
 - A股分析须结合中国特色市场环境（政策市特征、北上资金、融资融券等）
 - 黑天鹅投资策略须兼顾防守（对冲）与进攻（收益最大化）两个维度
 - 大宗商品分析必须同时结合程序抓取的价格趋势数据与相关新闻驱动因素，避免只看单日涨跌
+- 对美股与A股行业的短期判断必须优先引用【美股与A股市场/行业趋势数据】、【行业舆情摘要】和对应政策/新闻；若数据缺失必须明确写“数据缺失，仅作新闻情景推演”
+- 所有行业预测均须给出基准情景、核心催化、反向/失效信号和仓位上限，不得承诺收益或把主观判断表述为确定事实
 
 ## 报告结构
 
@@ -485,6 +587,8 @@ class LLMAnalyzer:
 
 #### 6.3 新闻—历史—策略映射
 - 分条对应：哪些今日标题/事实 → 对应第5章哪类风险信号 → 映射到哪段历史模式 → 为何导出该策略
+- 每条必须以 `- ` 开头，按以下纯文本格式单行输出：`- 今日标题/事实 → 风险信号（强度） → 历史模式 → 导出策略：理由`
+- 不得在该节使用缩进、数学公式、美元符号包裹、反斜杠命令或代码块
 
 #### 6.4 执行与风控
 - 建议仓位上限、分散化与与 **5.5 通用对冲** 的衔接；列出需**每日重评**的新闻与数据触发条件
@@ -492,7 +596,7 @@ class LLMAnalyzer:
 
         # ── A股专项分析（每份报告必选；a_share_focus 空时用默认维度）──
         a_share_focus_text = "\n".join([f"  - {item}" for item in a_share_focus])
-        system += f"""
+        a_share_section = f"""
 ### 7. 中国A股市场专项分析
 
 #### 7.1 市场趋势判断
@@ -516,8 +620,33 @@ class LLMAnalyzer:
 - 推荐配置的板块和行业（给出3-5个，含理由）
 - 建议回避或谨慎的领域；具体股票池方向
 - 仓位控制建议；关键数据和政策节点
+
+#### 7.6 A股重点行业短期趋势矩阵
+必须覆盖以下三类，按【市场/行业趋势数据】、政策新闻与【行业舆情摘要】交叉验证：
+- **科技（芯片、AI、存储）**：区分设计、制造/设备、算力、存储周期和国产替代，说明出口管制、资本开支、供需或估值变化的风险。
+- **金融（银行、券商、保险）**：说明利率曲线、信用风险、流动性、资本市场政策的传导，不把单一政策标题直接等同于业绩改善。
+- **大消费（必需/可选消费）**：说明社零、就业/收入预期、促消费政策及成本变化，区分必需与可选消费。
+
+须输出 Markdown 表格：
+| 行业 | 数据日期与当前状态 | {short_term_text}基准情景 | 主要催化 | 反向/失效信号 | 黑天鹅冲击路径 | 关注工具/仓位上限 |
+| --- | --- | --- | --- | --- | --- | --- |
+
+#### 7.7 A股科技急跌风险监测与合理解释
+本节针对芯片、AI、存储等科技方向的“类似7月急跌”情景做**脆弱性预警**，不是对黑天鹅的确定性预测：
+- 先引用【市场/行业趋势数据】中的相对宽基表现、20日跌幅/回撤、波动率、均线结构、下跌日放量和风险等级；逐项区分已触发、未触发与数据缺失。
+- 再结合科技/政策标签新闻、行业舆情、历史新闻，解释可能的驱动链：估值与拥挤交易、海外出口限制/供应链、AI资本开支或存储价格预期、流动性/风险偏好、政策预期落空。没有提供的估值、北向资金或融资数据必须明确写“未采集，无法验证”。
+- 若出现急跌，必须将解释标注为“事后归因假设”，不得把相关性写成因果关系；若尚未发生，只能给出条件化情景。
+
+必须输出 Markdown 表格：
+| 当前脆弱性信号 | 证据数据/新闻 | 合理解释或传导链 | 触发阈值 | 未来5日/1-4周情景 | 失效/缓解信号 | 风控动作 |
+| --- | --- | --- | --- | --- | --- | --- |
+- 触发阈值示例：科技行业5日相对宽基跑输超过3个百分点、20日回撤超过8%、价格跌破MA20且MA20低于MA60、下跌日量能比超过1.3。仅当至少两项量价信号与新闻/政策压力同时出现时，才标为“高关注”。
 """
-        next_section = 8
+        if include_a_share_analysis:
+            system += a_share_section
+            next_section = 8
+        else:
+            next_section = 7
 
         # ── 美股专项分析 ────────────────────────────────────────────
         system += f"""
@@ -534,6 +663,12 @@ class LLMAnalyzer:
 - **金融**：银行股与利率曲线；区域银行风险
 - **防御板块**：必需消费、医疗、公用事业的避险价值
 - **军工/国防**：地缘紧张下的受益逻辑
+{us_market_focus_text}
+
+#### {next_section}.2.1 美股行业短期趋势矩阵
+必须覆盖**科技/AI/半导体与存储、金融、必需及可选消费**，并结合 SPY/QQQ、行业 ETF、VIX 等已提供数据。
+| 行业 | 数据日期与当前状态 | {short_term_text}基准情景 | 主要催化 | 反向/失效信号 | 黑天鹅冲击路径 | 关注工具/仓位上限 |
+| --- | --- | --- | --- | --- | --- | --- |
 
 #### {next_section}.3 黑天鹅情景对美股的冲击
 - 针对5.3中各情景，分析标普500可能的跌幅区间和受益板块
@@ -633,7 +768,7 @@ class LLMAnalyzer:
         """
         today_str = datetime.now().strftime('%Y-%m-%d')
 
-        return f"""请基于以下全球新闻数据、历史新闻参考和大宗商品价格趋势数据，按照你的分析框架输出完整报告。
+        return f"""请基于以下全球新闻、历史新闻、大宗商品、市场行情与行业舆情数据，按照你的分析框架输出完整报告。
 
 今日日期：{today_str}
 
@@ -643,7 +778,7 @@ class LLMAnalyzer:
 
 ---
 
-请严格按照报告结构逐章输出分析，不要省略任何章节。**全程使用 Markdown 格式**，表格用 `| 列 |` 语法，重点用 `**粗体**`，列表前后留空行。大宗商品章节必须给出趋势预测、具体投资标的和风控条件。"""
+请严格按照报告结构逐章输出分析，不要省略任何章节。**全程使用 Markdown 格式**，表格用 `| 列 |` 语法，重点用 `**粗体**`，列表前后留空行。大宗商品章节必须给出趋势预测、具体投资标的和风控条件。市场和行业章节必须标注所引用数据的日期、缺失项与失效条件。"""
     
     def _call_llm(self, system_prompt: str, user_prompt: str) -> str:
         """

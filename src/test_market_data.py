@@ -1,0 +1,205 @@
+"""市场数据、行业标签和舆情摘要的离线单元测试。"""
+
+import unittest
+from datetime import datetime, timezone
+from unittest.mock import Mock
+
+from market_data_fetcher import MarketDataFetcher
+from news_fetcher import Article, NewsFetcher
+from sentiment_fetcher import SentimentFetcher
+from llm_analyzer import LLMAnalyzer
+from email_sender import EmailSender
+
+
+class MarketDataFetcherTest(unittest.TestCase):
+    def setUp(self):
+        self.config = {
+            "markets": {
+                "enabled": True,
+                "historical_days": 60,
+                "assets": [
+                    {
+                        "name": "科技ETF",
+                        "symbol": "XLK",
+                        "provider": "yahoo",
+                        "market": "US",
+                        "sector": "tech",
+                    }
+                ],
+            },
+            "fetcher": {"retry_attempts": 1},
+        }
+
+    def test_yahoo_data_is_normalized_to_trend_snapshot(self):
+        fetcher = MarketDataFetcher(self.config)
+        rows = [
+            {"date": f"2026-01-{index + 1:02d}", "close": 100 + index, "volume": 1000}
+            for index in range(60)
+        ]
+        fetcher._fetch_yahoo_rows = Mock(return_value=rows)
+
+        result = fetcher.fetch_all_markets()
+
+        self.assertEqual(len(result["items"]), 1)
+        item = result["items"][0]
+        self.assertEqual(item["name"], "科技ETF")
+        self.assertEqual(item["price"], 159)
+        self.assertEqual(item["trend_signal"], "上升趋势")
+        self.assertEqual(item["price_date"], "2026-01-60")
+        self.assertIsNotNone(item["drawdown_20d_pct"])
+        self.assertIsNotNone(item["volatility_20d_pct"])
+
+    def test_tech_risk_requires_multiple_observable_signals(self):
+        items = [
+            {"market": "CN", "sector": "broad", "change_5d_pct": -1},
+            {
+                "market": "CN",
+                "sector": "tech",
+                "change_1d_pct": -2,
+                "change_5d_pct": -5,
+                "change_20d_pct": -10,
+                "drawdown_20d_pct": -11,
+                "price": 80,
+                "ma20": 90,
+                "ma60": 100,
+                "volume_ratio_20d": 1.5,
+            },
+        ]
+
+        MarketDataFetcher._add_sector_risk_assessments(items)
+
+        self.assertEqual(items[1]["risk_level"], "高")
+        self.assertGreaterEqual(len(items[1]["risk_signals"]), 3)
+
+
+class IndustryTagAndSentimentTest(unittest.TestCase):
+    def setUp(self):
+        self.config = {
+            "content_filter": {
+                "min_content_length": 1,
+                "exclude_keywords": [],
+                "include_keywords": [],
+                "sector_keywords": {
+                    "tech": ["AI", "chip"],
+                    "finance": ["bank"],
+                    "consumer": ["retail"],
+                    "policy": ["policy"],
+                },
+            },
+            "fetcher": {"max_articles": 10, "retry_attempts": 1},
+            "sentiment": {"enabled": True, "guba_enabled": False},
+        }
+
+    def test_article_can_have_multiple_industry_tags(self):
+        article = Article(
+            title="AI chip policy supports retail banks",
+            description="detail",
+            content="detail",
+            url="https://example.com/article",
+            source="test",
+            published_at=datetime.now(timezone.utc),
+        )
+        filtered = NewsFetcher(self.config)._filter_articles([article])
+
+        self.assertEqual(len(filtered), 1)
+        self.assertEqual(
+            set(filtered[0].tags), {"tech", "finance", "consumer", "policy"}
+        )
+
+    def test_sentiment_keeps_sample_size_and_market_context(self):
+        article = Article(
+            title="AI chip growth accelerates",
+            description="detail",
+            content="detail",
+            url="https://example.com/sentiment",
+            source="test",
+            published_at=datetime.now(timezone.utc),
+            tags=["tech"],
+        )
+        result = SentimentFetcher(self.config).fetch(
+            [article],
+            {
+                "items": [
+                    {
+                        "name": "科技ETF",
+                        "sector": "tech",
+                        "trend_signal": "上升趋势",
+                        "change_5d_pct": 3.2,
+                    }
+                ]
+            },
+        )
+        tech = next(item for item in result["items"] if item["sector"] == "tech")
+        self.assertEqual(tech["sample_size"], 1)
+        self.assertEqual(tech["sentiment"], "偏正面")
+        self.assertEqual(tech["market_context"][0]["name"], "科技ETF")
+
+    def test_newsapi_rate_limit_stops_remaining_requests(self):
+        config = {
+            "news_api": {
+                "api_key": "test-key",
+                "countries": ["us", "gb"],
+                "categories": ["business", "technology"],
+                "page_size": 1,
+            },
+            "fetcher": {"retry_attempts": 3},
+        }
+        fetcher = NewsFetcher(config)
+        response = Mock(status_code=429, headers={"Retry-After": "60"})
+        fetcher.session.get = Mock(return_value=response)
+
+        self.assertEqual(fetcher.fetch_from_newsapi(), [])
+        self.assertEqual(fetcher.session.get.call_count, 1)
+
+    def test_gdelt_headline_respects_domain_whitelist(self):
+        fetcher = NewsFetcher(self.config)
+        article = fetcher._parse_gdelt_article(
+            {
+                "title": "Chip market gains",
+                "url": "https://www.reuters.com/example",
+                "domain": "reuters.com",
+                "seendate": "20260718T010203Z",
+                "sourcecountry": "US",
+            }
+        )
+
+        self.assertTrue(article.headline_only)
+        self.assertTrue(
+            fetcher._is_trusted_domain("www.reuters.com", {"reuters.com"})
+        )
+        self.assertFalse(fetcher._is_trusted_domain("example.com", {"reuters.com"}))
+
+
+class IndustryReportPromptTest(unittest.TestCase):
+    def test_prompt_requires_data_backed_industry_matrix(self):
+        analyzer = object.__new__(LLMAnalyzer)
+        analyzer.analysis_config = {
+            "focus_areas": [],
+            "include_predictions": True,
+            "include_a_share_analysis": True,
+            "short_term_timeframes": ["未来5个交易日", "未来1-4周"],
+            "us_market_focus": ["科技/AI/半导体与存储"],
+        }
+
+        prompt = analyzer._build_system_prompt()
+
+        self.assertIn("A股重点行业短期趋势矩阵", prompt)
+        self.assertIn("美股行业短期趋势矩阵", prompt)
+        self.assertIn("A股科技急跌风险监测与合理解释", prompt)
+        self.assertIn("数据缺失，仅作新闻情景推演", prompt)
+
+
+class MarkdownFormattingTest(unittest.TestCase):
+    def test_latex_arrow_mapping_is_rendered_as_list_text(self):
+        html = EmailSender({})._markdown_to_html(
+            "    - 今日事实 $军事冲突 \\rightarrow 能源风险$ → 历史模式 → 策略"
+        )
+
+        self.assertIn("<li>", html)
+        self.assertIn("军事冲突 → 能源风险", html)
+        self.assertNotIn(r"\rightarrow", html)
+        self.assertNotIn("<code>", html)
+
+
+if __name__ == "__main__":
+    unittest.main()
