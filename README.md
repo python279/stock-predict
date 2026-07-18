@@ -6,12 +6,13 @@
 
 ## ✨ 主要特性
 
-- 🌍 **多源新闻抓取**: News API + **32个**权威 RSS 新闻源（含黑天鹅专项渠道）
+- 🌍 **多源新闻抓取**: News API、RSS、GDELT DOC API 与 Google News 搜索 RSS；聚合源通过白名单过滤
 - ⚡ **黑天鹅预警**: 对比可配置的历史新闻窗口，识别军事/金融/政治/能源/科技突发信号
 - 🤖 **智能AI分析**: system/user prompt 分离，强制 Markdown 输出格式
 - 📈 **四大市场覆盖**: A股、美股、港股、日本股市专项分析
 - 📉 **行业数据增强**: 注入美股指数/ETF与A股宽基/行业行情，覆盖科技（芯片、AI、存储）、金融和大消费
 - 📰 **行业证据包**: 新闻自动打行业/政策标签，结合权威政策新闻和透明的轻量舆情摘要
+- 🛢️ **商品趋势数据**: 可选接入 Yahoo Finance 日线，分析油、金、铜、农产品等的趋势与跨资产传导
 - 💰 **投资策略**: 针对黑天鹅情景给出收益最大化方案（含 T+0~T+3 快速响应）
 - 📧 **自动邮件**: 每天定时发送，Markdown 完整渲染（表格/粗体/引用块）
 - ⏰ **自动调度**: 支持定时自动执行，完全无人值守
@@ -22,13 +23,15 @@
 
 ```
 info-os/
-├── config.yaml              # 主配置文件
+├── config.example.yaml      # 可提交的配置模板
+├── config.yaml              # 本地主配置文件（由模板复制，勿提交）
 ├── requirements.txt         # Python依赖
 ├── README.md                # 本文件
 ├── run.sh                   # 快速启动脚本
 ├── src/                     # 源代码目录
 │   ├── config_loader.py     # 配置加载模块
-│   ├── news_fetcher.py      # 新闻抓取模块（News API + RSS）
+│   ├── news_fetcher.py      # 新闻抓取模块（News API + RSS + GDELT + Google News）
+│   ├── commodity_fetcher.py # 大宗商品行情与趋势指标
 │   ├── market_data_fetcher.py # 美股/A股行情与趋势指标
 │   ├── sentiment_fetcher.py # 行业舆情摘要（新闻为主、股吧可选）
 │   ├── llm_analyzer.py      # 大模型分析模块（system/user prompt 分离）
@@ -40,6 +43,7 @@ info-os/
 │   ├── test_config.py       # 配置测试工具
 │   ├── test_rss_sources.py  # RSS源测试工具
 │   └── test_email.py        # 邮件测试工具
+│   └── test_market_data.py  # 市场、限流、提示词与格式测试
 ├── data/                    # 数据目录
 │   ├── news_cache/          # 新闻缓存（供历史分析使用）
 │   ├── market_cache/        # 市场和舆情快照
@@ -56,6 +60,14 @@ info-os/
 - 路径: `.venv/bin/python3`
 - 所有命令示例均使用此解释器
 - 建议使用虚拟环境以避免依赖冲突
+
+### 步骤 0: 创建本地配置
+
+```bash
+cp config.example.yaml config.yaml
+```
+
+随后编辑 `config.yaml` 填入邮箱及模型密钥。该文件包含敏感信息，不应提交。
 
 ### 步骤 1: 安装依赖
 
@@ -146,6 +158,8 @@ llm:
   base_url: "http://localhost:11434/v1/"
   max_tokens: 65536
   temperature: 0.8
+  timeout_seconds: 1800
+  max_retries: 1
 ```
 
 #### OpenAI（GPT-4）
@@ -157,6 +171,8 @@ llm:
   base_url: ""
   max_tokens: 8000
   temperature: 0.7
+  timeout_seconds: 1800
+  max_retries: 1
 ```
 
 #### OpenAI兼容接口（讯飞星火、通义千问等）
@@ -168,6 +184,8 @@ llm:
   base_url: "https://spark-api-open.xf-yun.com/v2/"
   max_tokens: 32768
   temperature: 0.7
+  timeout_seconds: 1800
+  max_retries: 1
 ```
 
 #### Anthropic Claude
@@ -178,11 +196,13 @@ llm:
   model: "claude-3-5-sonnet-20241022"
   max_tokens: 8000
   temperature: 0.7
+  timeout_seconds: 1800
+  max_retries: 1
 ```
 
 ### 步骤 4: 配置News API（可选）
 
-访问 https://newsapi.org 注册获取免费API Key（100次/天）：
+访问 https://newsapi.org 注册获取免费 API Key（100 次/天）：
 
 ```yaml
 news_api:
@@ -190,7 +210,13 @@ news_api:
   api_key: "your-newsapi-key"
 ```
 
-> **不配置也可以**：系统会自动使用32个RSS新闻源，完全够用。
+> `countries × categories` 决定每轮 News API 请求数；模板默认约 30 次。HTTP 429 不会重试，程序会停止该源本轮请求并继续其他来源。
+
+### 步骤 4.5: 配置免费聚合新闻源（可选）
+
+`config.example.yaml` 默认启用 GDELT 与 Google News 搜索 RSS，二者都不需要 API Key。请维护 `trusted_domains` / `trusted_sources` 白名单，只将可信媒体的标题级聚合结果送入报告。
+
+> 不配置 News API 也可运行：RSS、GDELT 与 Google News 会继续工作。GDELT 遇 HTTP 429 时同样停止本轮后续查询；其他网络错误按 `fetcher.retry_*` 重试。
 
 ### 步骤 5: 测试配置
 
@@ -206,13 +232,12 @@ news_api:
 ```
 
 系统会：
-1. 抓取全球新闻（约60秒，32个RSS源）
-2. 抓取配置的美股/A股市场行情与行业舆情摘要
-3. 加载可配置的历史新闻窗口（默认14天，用于黑天鹅对比分析）
-4. AI分析生成市场与行业报告（依模型而定）
-4. 发送HTML邮件报告
+1. 抓取新闻（News API、RSS、GDELT、Google News；耗时取决于网络与启用源）
+2. 可选抓取大宗商品、美股/A股市场行情与行业舆情摘要
+3. 保存新闻和市场缓存，加载历史新闻窗口（示例默认 14 天、每日最多 25 篇）
+4. AI 生成市场与行业报告，再保存并发送 HTML 邮件
 
-**启动定时调度器（每天自动运行）：**
+**启动定时调度器：**
 ```bash
 .venv/bin/python3 src/scheduler.py
 ```
@@ -224,9 +249,9 @@ news_api:
 
 ---
 
-## 📰 新闻源配置（32个）
+## 📰 新闻源配置
 
-系统配置了32个权威新闻源，按功能分为五大类。
+以下是推荐的权威 RSS 扩展清单。`config.example.yaml` 默认启用其中 20 个 RSS 源，并额外启用 Federal Reserve Press；可根据网络条件和需要补齐或替换。
 
 ### 🔴 电报社 / 突发预警（4个）
 突发事件比普通媒体**早15-30分钟**报道，黑天鹅预警核心来源。
@@ -276,6 +301,11 @@ news_api:
 | 31 | **NYT World** | 深度背景报道 |
 | 32 | **UN News / IMF News** | 国际组织官方动态 |
 
+### 🏛️ 官方政策源
+
+- **Federal Reserve Press**：示例配置默认启用，用于补充美国货币政策和金融监管的一手信息。
+- 中国政策信息应优先从国务院、人民银行、证监会、工信部等官方网站获取；请仅在确认 RSS/API 稳定且符合使用条款后加入 `rss_feeds.sources`。
+
 ### 测试RSS源
 
 ```bash
@@ -290,7 +320,7 @@ news_api:
 
 ## 📊 分析报告结构
 
-每次运行后，您会收到包含以下11章的专业分析报告：
+开启预测和 A 股专项时，报告包含 12 个主章节及第 3.5 节大宗商品专节。若关闭 `include_a_share_analysis`，后续章节编号会自动前移。
 
 ### 第1章：重要新闻速览
 3-5条最重要的全球事件，今日新闻优先，附历史对比
@@ -301,12 +331,15 @@ news_api:
 ### 第3章：全球经济趋势分析
 宏观指标、**四大央行**货币政策、贸易关系、大宗商品（油/金/铜）
 
+#### 第3.5节：大宗商品价格趋势预测与投资标的
+基于可选的商品日线数据与新闻，提供趋势矩阵、跨市场标的及跨资产传导；数据不可用时会明确降级为新闻情景推演。
+
 ### 第4章：地缘政治风险评估
 主要事件、升温信号、经济传导路径
 
 ### 第5章：⚡ 黑天鹅事件预警与投资策略
 
-> 对比今日新闻与过去5天历史，识别突发信号
+> 对比今日新闻与过去 N 天历史（`storage.historical_news_days`，示例默认 14 天），识别突发信号
 
 - **5.1** 近期已发生的黑天鹅/灰犀牛事件
 - **5.2** 潜在信号识别（军事/金融/政治/能源/科技 五维度）
@@ -317,22 +350,25 @@ news_api:
   - 潜在收益区间估算
 - **5.5** 通用黑天鹅对冲清单（黄金/美元/防御板块比例）
 
-### 第6章：中国A股专项分析
-沪深300/科创50走势、行业板块轮动、政策传导、黑天鹅冲击路径、具体股票池建议。新增科技（芯片、AI、存储）、金融和大消费的短期趋势矩阵，统一披露数据日期、催化、失效信号与仓位上限。
+### 第6章：超高收益情景投资策略
+将新闻、黑天鹅信号和历史类比映射到跨市场策略，并明确前提、主观置信度、失效信号与止损/对冲；不构成收益承诺。
 
-### 第7章：美股专项分析
+### 第7章：中国A股专项分析
+沪深300/科创50走势、行业板块轮动、政策传导与黑天鹅冲击路径。科技（芯片、AI、存储）、金融和大消费均有短期趋势矩阵；科技部分另有急跌脆弱性监测，使用相对宽基表现、回撤、均线、量能与新闻信号，不能预测不可预见事件。
+
+### 第8章：美股专项分析
 标普500/纳指/道指、Mag-7走势、能源/金融/军工/科技板块、ETF与期权方向建议。科技/半导体与存储、金融、必需及可选消费均以行情、政策和舆情证据进行短期情景分析。
 
-### 第8章：港股专项分析
+### 第9章：港股专项分析
 恒生/恒生科技指数、南下资金、中概科技（腾讯/阿里等）、H股折价逻辑
 
-### 第9章：日本股市专项分析
+### 第10章：日本股市专项分析
 日经225/TOPIX、日元汇率影响、半导体设备（东京电子等）、日央行加息节奏
 
-### 第10章：未来预测（1-3个月）
+### 第11章：未来预测（1-3个月）
 四大市场运行路径、黑天鹅概率变化趋势、关键时间节点日历
 
-### 第11章：综合行动建议
+### 第12章：综合行动建议
 - 四大市场仓位分配建议（A股/美股/港股/日股占比）
 - 黑天鹅对冲仓位
 - 近期关键操作（未来1-2周）
@@ -381,20 +417,24 @@ analysis:
 
 ### 市场行情和舆情配置
 
-`markets.assets` 可配置美股 Yahoo Finance 标的，以及需要同时提供 `tencent_symbol`、`secid` 的 A 股宽基或 ETF。程序生成 1/5/20 日涨跌、MA5/20/60、量能比和趋势信号；行情源失败时报告会显式降级为新闻情景分析。
+`markets.assets` 按 `provider` 配置数据源：美股与部分 A 股 ETF 可使用 Yahoo Finance；使用东方财富/腾讯的 A 股资产需提供 `tencent_symbol`、`secid`。程序生成 1/5/20 日涨跌、MA5/20/60、20 日回撤、滚动波动率、量能比、趋势与行业风险等级；行情失败时报告会明确降级为新闻情景分析。
 
-`sentiment` 默认仅汇总已抓取的权威新闻标题和市场相对强弱。`guba_enabled` 默认为 `false`；启用股吧标题抓取前，请自行确认数据源条款与使用场景。
+`sentiment` 默认仅汇总已抓取的权威新闻标题和市场相对强弱。`guba_enabled` 默认为 `false`，`guba_codes` 可按 `tech`、`finance`、`consumer` 配置代码列表；启用前请确认数据源条款与使用场景。
 
-`storage.historical_news_days` 和 `storage.historical_news_max_per_day` 分别控制历史新闻窗口及每日输入上限。更长窗口会增加模型上下文与调用成本。
+`storage.historical_news_days` 和 `storage.historical_news_max_per_day` 分别控制历史新闻窗口及每日输入上限；示例默认 14 天和 25 篇。更长窗口会增加模型上下文与调用成本。
+
+`commodities` 是可选模块，使用 Yahoo Finance 日线计算商品趋势。启用后可配置 `historical_days`、超时/重试、`assets` 与按市场映射的 `investment_targets`；未配置时商品章节会保留但明确标记为数据缺失。
 
 ### 调度配置
 
 ```yaml
 scheduler:
   enabled: true
-  run_time: "08:00"       # 每天运行时间（24小时制）
+  run_time: "08:00"       # 每天固定运行时间（24小时制）
   timezone: "Asia/Shanghai"
 ```
+
+当前 `scheduler.py` 同时会在每天 `run_time` 和每小时整点触发任务。若只需每天一次，请使用 Cron 调度 `main.py`，或修改调度代码后再启动内置调度器。`enabled: false` 时会立即执行一次后退出。
 
 ### 内容过滤
 
@@ -423,6 +463,11 @@ content_filter:
     - "coup"
     - "nuclear"
     - "escalation"
+  sector_keywords:
+    tech: ["AI", "semiconductor", "chip", "memory", "storage", "芯片", "半导体"]
+    finance: ["bank", "credit", "interest rate", "银行", "券商", "保险"]
+    consumer: ["consumer", "retail", "消费", "零售", "社零"]
+    policy: ["policy", "regulation", "政策", "监管", "证监会", "人民银行"]
 ```
 
 ### 添加新的新闻源
@@ -472,6 +517,7 @@ cat $(ls -t data/reports/*.txt | head -1) | head -100
 
 ```bash
 rm -rf data/news_cache/*
+rm -rf data/market_cache/*
 ```
 
 > ⚠️ 注意：手动清除后，下次运行将没有历史新闻参考数据，黑天鹅对比分析效果会下降。
@@ -529,6 +575,7 @@ crontab -e
 - 检查 `config.yaml` 中 `api_key`、`base_url`、`model` 是否正确
 - 本地 Ollama：确认服务已启动（`ollama serve`）且模型已下载（`ollama pull qwen3.5:35b`）
 - 检查 `max_tokens` 是否超出模型限制
+- 本地长上下文报告可调大 `timeout_seconds`（示例为 1800 秒）；`max_retries` 控制 SDK 的自动重试次数
 
 ### Q5: 没有抓取到新闻？
 
@@ -536,8 +583,10 @@ crontab -e
 # 测试 RSS 源可用性
 .venv/bin/python3 src/test_rss_sources.py
 
-# 禁用 News API，只用 RSS
+# 禁用所有聚合/API 新闻源，仅使用 RSS
 # config.yaml: news_api.enabled: false
+#              gdelt.enabled: false
+#              google_news.enabled: false
 ```
 
 ### Q6: 报告内容质量不满意？
@@ -551,8 +600,8 @@ crontab -e
 ## 💰 成本估算
 
 ### 免费资源
-- ✅ RSS Feed（32个源）: 完全免费
-- ✅ News API: 免费版100次/天（足够）
+- ✅ RSS Feed、GDELT、Google News RSS: 无需 API Key
+- ✅ News API: 免费版 100 次/天；默认配置每轮约 30 次请求
 - ✅ 邮箱服务: 完全免费
 - ✅ 本地 Ollama: 完全免费（需要本地GPU/CPU算力）
 
@@ -564,7 +613,7 @@ crontab -e
 | GPT-4o | ~¥0.3-0.6 | ~¥10-18 |
 | Claude 3.5 Sonnet | ~¥0.2-0.4 | ~¥6-12 |
 
-> 报告现在约 11 个完整章节，Token 消耗约 8,000-15,000/次（含历史新闻上下文）。
+> 报告通常含 12 个主章节与可选商品专节。实际 Token 消耗受历史窗口、启用数据和模型输出长度影响，应以模型服务的用量统计为准。
 
 ---
 
@@ -579,7 +628,7 @@ crontab -e
 - 邮箱：避免频繁发送（建议每天1次）
 
 ### 3. 历史新闻缓存
-- 历史缓存存于 `data/news_cache/`，供黑天鹅信号对比使用
+- 历史新闻缓存存于 `data/news_cache/`，市场和舆情快照存于 `data/market_cache/`
 - 默认保留360天，可通过 `storage.max_cache_days` 调整
 - 清除缓存会降低黑天鹅分析精度
 
@@ -606,7 +655,7 @@ crontab -e
 
 ### 集成实时社交媒体（进阶）
 
-目前系统通过 RSS 获取新闻。如需更实时的黑天鹅预警，可扩展集成：
+目前已有 RSS、GDELT 和 Google News 的标题级聚合。如需进一步扩展实时信号，可集成：
 - **Twitter/X API**（付费，$100/月 Basic）：监控 `@Reuters`、`@OSINTdefender` 等
 - **Telegram Bot API**（免费）：订阅 `@warmonitors`、`@intelrepublic` 等频道
 
