@@ -1,5 +1,6 @@
 """市场数据、行业标签和舆情摘要的离线单元测试。"""
 
+import json
 import unittest
 from datetime import datetime, timezone
 from unittest.mock import Mock
@@ -49,6 +50,22 @@ class MarketDataFetcherTest(unittest.TestCase):
         self.assertIsNotNone(item["drawdown_20d_pct"])
         self.assertIsNotNone(item["volatility_20d_pct"])
 
+    def test_tencent_quote_is_parsed_before_eastmoney_fallback(self):
+        fetcher = MarketDataFetcher(self.config)
+        values = [""] * 31
+        values[3] = "4529.10"
+        values[6] = "302629886"
+        values[30] = "20260717161408"
+        response = Mock(content=f'v_sh000300="{"~".join(values)}";'.encode("gbk"))
+        response.raise_for_status = Mock()
+        fetcher.session.get = Mock(return_value=response)
+
+        quote = fetcher._fetch_tencent_quote("sh000300")
+
+        self.assertEqual(quote["price"], 4529.10)
+        self.assertEqual(quote["volume"], 302629886)
+        self.assertEqual(quote["date"], "2026-07-17")
+
     def test_tech_risk_requires_multiple_observable_signals(self):
         items = [
             {"market": "CN", "sector": "broad", "change_5d_pct": -1},
@@ -84,6 +101,7 @@ class IndustryTagAndSentimentTest(unittest.TestCase):
                     "finance": ["bank"],
                     "consumer": ["retail"],
                     "policy": ["policy"],
+                    "us_politics": ["White House", "election"],
                 },
             },
             "fetcher": {"max_articles": 10, "retry_attempts": 1},
@@ -92,7 +110,7 @@ class IndustryTagAndSentimentTest(unittest.TestCase):
 
     def test_article_can_have_multiple_industry_tags(self):
         article = Article(
-            title="AI chip policy supports retail banks",
+            title="White House AI chip policy supports retail banks",
             description="detail",
             content="detail",
             url="https://example.com/article",
@@ -103,7 +121,8 @@ class IndustryTagAndSentimentTest(unittest.TestCase):
 
         self.assertEqual(len(filtered), 1)
         self.assertEqual(
-            set(filtered[0].tags), {"tech", "finance", "consumer", "policy"}
+            set(filtered[0].tags),
+            {"tech", "finance", "consumer", "policy", "us_politics"},
         )
 
     def test_sentiment_keeps_sample_size_and_market_context(self):
@@ -169,6 +188,74 @@ class IndustryTagAndSentimentTest(unittest.TestCase):
         )
         self.assertFalse(fetcher._is_trusted_domain("example.com", {"reuters.com"}))
 
+    def test_imf_archive_reads_official_dynamic_api(self):
+        config = {
+            "imf_archive": {
+                "enabled": True,
+                "max_records": 2,
+                "sectors": ["finance", "policy"],
+            },
+            "fetcher": {"retry_attempts": 1},
+        }
+        fetcher = NewsFetcher(config)
+        page_response = Mock(status_code=200)
+        page_response.text = (
+            '<script id="__NEXT_DATA__" type="application/json">'
+            + json.dumps(
+                {
+                    "props": {
+                        "pageProps": {
+                            "page": {
+                                "layout": {
+                                    "sitecore": {
+                                        "route": {"itemId": "archive-item-id"}
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            )
+            + "</script>"
+        )
+        page_response.raise_for_status = Mock()
+        api_response = Mock(status_code=200)
+        api_response.json.return_value = {
+            "search": {
+                "results": [
+                    {
+                        "languages": [
+                            {
+                                "language": {"name": "en"},
+                                "mainTitle": {"jsonValue": {"value": "IMF policy update"}},
+                                "mainTitleLink": {
+                                    "url": "/en/news/articles/2026/07/19/pr-imf-example"
+                                },
+                            }
+                        ],
+                        "description": {
+                            "jsonValue": {"value": "<p>Official IMF announcement.</p>"}
+                        },
+                        "fromDateTime": {"jsonValue": {"value": "2026-07-19T09:00:00Z"}},
+                    }
+                ]
+            }
+        }
+        api_response.raise_for_status = Mock()
+        fetcher.session.get = Mock(side_effect=[page_response, api_response])
+
+        articles = fetcher.fetch_from_imf_archive()
+
+        self.assertEqual(len(articles), 1)
+        self.assertEqual(fetcher.session.get.call_args_list[1].args[0], "https://www.imf.org/api/oap/news-archive")
+        self.assertEqual(articles[0].source, "IMF What's New Archive")
+        self.assertEqual(
+            articles[0].url,
+            "https://www.imf.org/en/news/articles/2026/07/19/pr-imf-example",
+        )
+        self.assertTrue(articles[0].headline_only)
+        self.assertEqual(articles[0].tags, ["finance", "policy"])
+
 
 class IndustryReportPromptTest(unittest.TestCase):
     def test_prompt_requires_data_backed_industry_matrix(self):
@@ -187,6 +274,7 @@ class IndustryReportPromptTest(unittest.TestCase):
         self.assertIn("A股：行业趋势与科技急跌预警", prompt)
         self.assertIn("美股：行业与风险偏好", prompt)
         self.assertIn("科技急跌风险监测", prompt)
+        self.assertIn("美国政治热点与全球传导", prompt)
         self.assertIn("证据不足", prompt)
 
 

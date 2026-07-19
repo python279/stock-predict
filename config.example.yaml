@@ -42,6 +42,7 @@ gdelt:
     - "(economy OR market OR inflation OR \"interest rate\")"
     - "(semiconductor OR chip OR AI OR memory OR storage)"
     - "(bank OR credit OR liquidity OR consumer OR retail)"
+    - "(US election OR White House OR Congress OR foreign policy OR Middle East)"
   trusted_domains:
     - "reuters.com"
     - "bbc.com"
@@ -63,6 +64,8 @@ google_news:
     - "global economy markets"
     - "semiconductor AI memory storage"
     - "banking credit consumer retail"
+    - "US election White House Congress Middle East foreign policy"
+    - "site:imf.org/en/News/Articles IMF"
   trusted_sources:
     - "Reuters"
     - "BBC"
@@ -71,6 +74,18 @@ google_news:
     - "CNBC"
     - "NPR"
     - "The Guardian"
+    - "International Monetary Fund | IMF"
+
+# IMF 的 RSS 页面会返回 HTML/403；保留官网归档作为独立的尽力抓取入口。
+imf_archive:
+  enabled: true
+  url: "https://www.imf.org/en/whats-new-archive"
+  language: "en"
+  lookback_days: 30
+  max_records: 10
+  region: "international"
+  priority: 5
+  sectors: ["finance", "policy"]
 
 # RSS Feed配置
 rss_feeds:
@@ -159,10 +174,6 @@ rss_feeds:
       url: "https://news.un.org/feed/subscribe/en/news/all/rss.xml"
       region: "international"
       priority: 4
-    - name: "IMF News"
-      url: "https://www.imf.org/en/News/rss"
-      region: "international"
-      priority: 4
     - name: "Federal Reserve Press"
       url: "https://www.federalreserve.gov/feeds/press_all.xml"
       region: "americas"
@@ -212,11 +223,20 @@ content_filter:
     - "证监会"
     - "人民银行"
     - "工信部"
+    - "election"
+    - "White House"
+    - "Congress"
+    - "President"
+    - "外交政策"
+    - "美国大选"
+    - "白宫"
+    - "国会"
   sector_keywords:
     tech: ["AI", "semiconductor", "chip", "memory", "storage", "HBM", "算力", "芯片", "半导体", "存储"]
     finance: ["bank", "banking", "credit", "interest rate", "liquidity", "银行", "券商", "保险", "降准", "降息"]
     consumer: ["consumer", "retail", "consumer spending", "消费", "零售", "社零", "以旧换新", "食品饮料"]
     policy: ["policy", "regulation", "Federal Reserve", "PBOC", "CSRC", "政策", "监管", "证监会", "人民银行", "工信部"]
+    us_politics: ["election", "White House", "Congress", "President", "campaign", "sanctions", "foreign policy", "美国大选", "白宫", "国会", "选举", "外交政策"]
 
 # 美股和 A 股行业行情。A 股代码使用腾讯日线代码与东财 secid 的组合。
 markets:

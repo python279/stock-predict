@@ -12,6 +12,7 @@
 - 📈 **四大市场覆盖**: A股、美股、港股、日本股市专项分析
 - 📉 **行业数据增强**: 注入美股指数/ETF与A股宽基/行业行情，覆盖科技（芯片、AI、存储）、金融和大消费
 - 📰 **行业证据包**: 新闻自动打行业/政策标签，结合权威政策新闻和透明的轻量舆情摘要
+- 🏛️ **美国政治传导**: 跟踪选举、白宫/国会政策、制裁与外交信号，区分事实、传导假设和待验证市场信号
 - 🛢️ **商品趋势数据**: 可选接入 Yahoo Finance 日线，分析油、金、铜、农产品等的趋势与跨资产传导
 - 💰 **投资策略**: 针对黑天鹅情景给出收益最大化方案（含 T+0~T+3 快速响应）
 - 📧 **自动邮件**: 每天定时发送，Markdown 完整渲染（表格/粗体/引用块）
@@ -214,9 +215,9 @@ news_api:
 
 ### 步骤 4.5: 配置免费聚合新闻源（可选）
 
-`config.example.yaml` 默认启用 GDELT 与 Google News 搜索 RSS，二者都不需要 API Key。请维护 `trusted_domains` / `trusted_sources` 白名单，只将可信媒体的标题级聚合结果送入报告。
+`config.example.yaml` 默认启用 GDELT 与 Google News 搜索 RSS，二者都不需要 API Key。请维护 `trusted_domains` / `trusted_sources` 白名单，只将可信媒体的标题级聚合结果送入报告。模板还通过 Google News 的 IMF 官方域名检索补充 IMF 新闻。
 
-> 不配置 News API 也可运行：RSS、GDELT 与 Google News 会继续工作。GDELT 遇 HTTP 429 时同样停止本轮后续查询；其他网络错误按 `fetcher.retry_*` 重试。
+> 不配置 News API 也可运行：RSS、GDELT、Google News 与 IMF 归档会继续工作。GDELT 遇 HTTP 429 时同样停止本轮后续查询；其他网络错误按 `fetcher.retry_*` 重试。
 
 ### 步骤 5: 测试配置
 
@@ -235,7 +236,7 @@ news_api:
 ```
 
 系统会：
-1. 抓取新闻（News API、RSS、GDELT、Google News；耗时取决于网络与启用源）
+1. 抓取新闻（News API、RSS、GDELT、Google News、IMF 官网归档；耗时取决于网络与启用源）
 2. 可选抓取大宗商品、美股/A股市场行情与行业舆情摘要
 3. 保存新闻和市场缓存，加载历史新闻窗口（示例默认 14 天、每日最多 25 篇）
 4. AI 生成市场与行业报告，再保存并发送 HTML 邮件
@@ -302,11 +303,12 @@ news_api:
 | 29 | **CNBC World News** | 突发对市场影响第一时间 |
 | 30 | **Washington Post World** | 华盛顿决策内幕 |
 | 31 | **NYT World** | 深度背景报道 |
-| 32 | **UN News / IMF News** | 国际组织官方动态 |
+| 32 | **UN News / IMF 官方新闻** | 国际组织官方动态 |
 
 ### 🏛️ 官方政策源
 
 - **Federal Reserve Press**：示例配置默认启用，用于补充美国货币政策和金融监管的一手信息。
+- **IMF 官方新闻**：Google News RSS 仅接收 `International Monetary Fund | IMF` 的官方结果；同时通过 IMF “What's New Archive”的官方动态 JSON 接口抓取更新。接口返回 HTTP 403、429 或暂时不可用时会跳过归档源并继续其他新闻源，不尝试绕过访问限制。
 - 中国政策信息应优先从国务院、人民银行、证监会、工信部等官方网站获取；请仅在确认 RSS/API 稳定且符合使用条款后加入 `rss_feeds.sources`。
 
 ### 测试RSS源
@@ -317,7 +319,9 @@ news_api:
 
 ### 免费新闻源与限流降级
 
-除 RSS 外，系统支持无需密钥的 GDELT DOC API 与 Google News 搜索 RSS。两者均通过配置白名单过滤媒体来源，避免把聚合站或未知站点直接送入报告。NewsAPI 返回 HTTP 429 时，程序会立即停止该轮的后续 NewsAPI 请求，继续使用 RSS、GDELT 和 Google News，不会进行无效重试。
+除 RSS 外，系统支持无需密钥的 GDELT DOC API、Google News 搜索 RSS 与 IMF “What's New Archive”归档。GDELT 与 Google News 均通过配置白名单过滤媒体来源，避免把聚合站或未知站点直接送入报告。NewsAPI 返回 HTTP 429 时，程序会立即停止该轮的后续 NewsAPI 请求，继续使用 RSS、GDELT、Google News 和 IMF 归档，不会进行无效重试。
+
+默认查询还包含美国选举、白宫、国会、外交与中东政策热点。政治新闻只用于构建“政策预期 → 经济/资产”的可验证传导假设；不将时间相关性直接表述为因果关系。
 
 ---
 
@@ -391,7 +395,7 @@ analysis:
 
 ### 市场行情和舆情配置
 
-`markets.assets` 按 `provider` 配置数据源：美股与部分 A 股 ETF 可使用 Yahoo Finance；使用东方财富/腾讯的 A 股资产需提供 `tencent_symbol`、`secid`。程序生成 1/5/20 日涨跌、MA5/20/60、20 日回撤、滚动波动率、量能比、趋势与行业风险等级；行情失败时报告会明确降级为新闻情景分析。
+`markets.assets` 按 `provider` 配置数据源：美股与部分 A 股 ETF 可使用 Yahoo Finance；A 股宽基优先使用腾讯实时快照和日线，腾讯不可用时才尝试东方财富备用快照，需提供 `tencent_symbol`、`secid`。程序生成 1/5/20 日涨跌、MA5/20/60、20 日回撤、滚动波动率、量能比、趋势与行业风险等级；行情失败时报告会明确降级为新闻情景分析。
 
 `sentiment` 默认仅汇总已抓取的权威新闻标题和市场相对强弱。`guba_enabled` 默认为 `false`，`guba_codes` 可按 `tech`、`finance`、`consumer` 配置代码列表；启用前请确认数据源条款与使用场景。
 

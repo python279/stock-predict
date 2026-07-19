@@ -193,6 +193,29 @@ class LLMAnalyzer:
                     f"   摘要: {desc}...\n"
                 )
 
+        # ── 美国政治热点 ───────────────────────────────────────────
+        us_politics_articles = [
+            article for article in articles
+            if "us_politics" in getattr(article, "tags", [])
+        ]
+        if us_politics_articles:
+            summary_parts.append(
+                "\n\n# 【美国政治热点（仅供政治—经济传导分析）】"
+                "\n> 这些标题是政治信号，不自动证明其与市场或战争存在因果关系。"
+                "分析时须区分已证实事实、可能传导机制和待验证假设。"
+            )
+            for index, article in enumerate(us_politics_articles[:6], 1):
+                pub = (
+                    article.published_at.strftime("%Y-%m-%d %H:%M")
+                    if hasattr(article.published_at, "strftime")
+                    else str(article.published_at)
+                )
+                summary_parts.append(
+                    f"\n{index}. 【{article.source}】{article.title}\n"
+                    f"   发布时间: {pub}\n"
+                    f"   摘要: {(article.description or '')[:180]}...\n"
+                )
+
         # ── 历史新闻（过去 N 天）────────────────────────────────────
         if historical_news:
             sorted_dates = sorted(historical_news.keys(), reverse=True)
@@ -817,6 +840,11 @@ class LLMAnalyzer:
 - 只列 2–3 个最高优先级情景，合并地缘政治、金融、供应链和科技风险，避免另写区域新闻综述。
 - 用表格：`风险情景 | 已发生事实/信号 | 未来触发条件 | 主要受影响资产 | 当前应对`。
 - 对最高风险情景给出一条 T+0 至 T+3 的防守响应；不重复第 1 章的结论。
+
+#### 2.1 美国政治热点与全球传导
+- 若提供【美国政治热点】输入，优先分析选举、白宫/国会政策、制裁、军费、能源外交与中东局势如何**可能**经政策预期、财政/关税、能源供给、避险情绪传导至经济和市场。
+- 用不超过 3 行的表格：`政治事件/事实 | 可验证传导机制 | 受影响资产/行业 | 待验证信号 | 风险应对`。
+- 美国大选、党派立场或中东战争之间若无直接证据，只能写“相关性/共同驱动假设”，不得宣称选举“导致”战争或特定市场走势；必须列出可证伪条件。
 
 ### 3. 宏观与跨资产传导
 将全球增长、央行、贸易、能源/贵金属/工业金属/农产品合并分析。

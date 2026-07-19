@@ -49,6 +49,7 @@ class MarketDataFetcher:
     YAHOO_CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart"
     EASTMONEY_QUOTE_URL = "https://push2.eastmoney.com/api/qt/stock/get"
     TENCENT_KLINE_URL = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
+    TENCENT_QUOTE_URL = "https://qt.gtimg.cn/q="
 
     def __init__(self, config: Dict[str, Any]):
         self.config = config
@@ -108,7 +109,7 @@ class MarketDataFetcher:
             source = "Yahoo Finance"
         elif provider == "eastmoney" or market == "CN":
             rows = self._fetch_a_share_rows(asset)
-            source = "东方财富 / 腾讯财经"
+            source = "腾讯财经（东方财富备用）"
         else:
             raise ValueError(f"不支持的市场数据提供商: {provider or market}")
         return self._build_market_data(asset, rows, source)
@@ -167,28 +168,69 @@ class MarketDataFetcher:
             if len(day) > 2 and self._parse_float(day[2]) is not None
         ]
 
+        quote_data = self._fetch_tencent_quote(tencent_symbol)
+        if not quote_data:
+            quote_data = self._fetch_eastmoney_quote(secid)
+
+        latest_price = quote_data.get("price")
+        if latest_price is not None:
+            today = quote_data.get("date") or datetime.now().strftime("%Y-%m-%d")
+            latest_volume = quote_data.get("volume")
+            if rows and rows[-1]["date"] == today:
+                rows[-1].update({"close": latest_price, "volume": latest_volume})
+            elif not rows or latest_price != rows[-1]["close"]:
+                rows.append({"date": today, "close": latest_price, "volume": latest_volume})
+        return rows[-self.historical_days:]
+
+    def _fetch_tencent_quote(self, symbol: str) -> Dict[str, Any]:
+        """优先抓取腾讯实时快照；该接口与腾讯日线使用相同的证券前缀。"""
         try:
-            quote_data = self._request_json(
+            response = self.session.get(
+                f"{self.TENCENT_QUOTE_URL}{symbol}", timeout=self.timeout
+            )
+            response.raise_for_status()
+            raw = response.content.decode("gbk", errors="replace")
+            if '="' not in raw:
+                return {}
+            values = raw.split('="', 1)[1].rsplit('";', 1)[0].split("~")
+            if len(values) < 31:
+                return {}
+
+            timestamp = values[30]
+            try:
+                price_date = datetime.strptime(timestamp[:8], "%Y%m%d").strftime(
+                    "%Y-%m-%d"
+                )
+            except ValueError:
+                price_date = ""
+            return {
+                "price": self._parse_float(values[3]),
+                "volume": self._parse_float(values[6]),
+                "date": price_date,
+            }
+        except requests.RequestException as exc:
+            logger.info("腾讯实时快照不可用 %s: %s", symbol, exc)
+            return {}
+
+    def _fetch_eastmoney_quote(self, secid: str) -> Dict[str, Any]:
+        """腾讯快照不可用时再尝试东方财富，避免其网络失败拖慢正常任务。"""
+        try:
+            data = self._request_json(
                 self.EASTMONEY_QUOTE_URL,
                 {
                     "secid": secid,
                     "fields": "f43,f47,f55,f57,f58,f60",
                 },
             ).get("data") or {}
+            price = self._parse_float(data.get("f43"))
+            return {
+                "price": price / 100 if price is not None else None,
+                "volume": self._parse_float(data.get("f47")),
+                "date": "",
+            }
         except RuntimeError as exc:
-            # 东方财富快照不可用时，腾讯日线仍可提供上一个交易日的趋势基线。
-            logger.warning("东财快照不可用，使用腾讯历史日线 %s: %s", secid, exc)
-            quote_data = {}
-        latest_price = self._parse_float(quote_data.get("f43"))
-        if latest_price is not None:
-            latest_price /= 100
-            today = datetime.now().strftime("%Y-%m-%d")
-            latest_volume = self._parse_float(quote_data.get("f47"))
-            if rows and rows[-1]["date"] == today:
-                rows[-1].update({"close": latest_price, "volume": latest_volume})
-            elif not rows or latest_price != rows[-1]["close"]:
-                rows.append({"date": today, "close": latest_price, "volume": latest_volume})
-        return rows[-self.historical_days:]
+            logger.warning("A股实时快照不可用 %s: %s", secid, exc)
+            return {}
 
     def _build_market_data(
         self, asset: Dict[str, Any], rows: List[Dict[str, Any]], source: str

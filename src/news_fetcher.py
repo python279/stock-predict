@@ -11,6 +11,8 @@ from datetime import datetime, timedelta, timezone
 import time
 from urllib.parse import urlencode
 import hashlib
+import json
+from bs4 import BeautifulSoup
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +121,15 @@ class NewsFetcher:
                 logger.info(f"从 RSS Feed 抓取到 {len(articles)} 篇文章")
             except Exception as e:
                 logger.error(f"从 RSS Feed 抓取失败: {e}")
+
+        # IMF 不稳定的 RSS 页面改用官网“What's New”归档页尽力抓取。
+        if self.config.get('imf_archive', {}).get('enabled', False):
+            try:
+                articles = self.fetch_from_imf_archive()
+                all_articles.extend(articles)
+                logger.info(f"从 IMF What's New 归档抓取到 {len(articles)} 篇文章")
+            except Exception as e:
+                logger.error(f"从 IMF What's New 归档抓取失败: {e}")
 
         # GDELT 是无需密钥的全球新闻索引，作为 NewsAPI 的免费补充。
         if self.config.get('gdelt', {}).get('enabled', False):
@@ -245,6 +256,116 @@ class NewsFetcher:
                     articles.append(article)
             time.sleep(0.3)
         return articles
+
+    def fetch_from_imf_archive(self) -> List[Article]:
+        """通过 IMF 官网归档的动态 JSON 接口抓取官方更新。"""
+        archive_config = self.config.get('imf_archive', {})
+        url = archive_config.get('url', 'https://www.imf.org/en/whats-new-archive')
+        page_html = self._request_html(url)
+        if not page_html:
+            return []
+
+        item_id = archive_config.get('item_id') or self._imf_archive_item_id(page_html)
+        if not item_id:
+            logger.warning("未能从 IMF 归档页面识别动态接口 ID，跳过本轮归档抓取")
+            return []
+
+        now = datetime.now(timezone.utc)
+        lookback_days = archive_config.get('lookback_days', 30)
+        data = self._make_request(
+            "https://www.imf.org/api/oap/news-archive",
+            params={
+                'itemLimit': archive_config.get('max_records', 10),
+                'language': archive_config.get('language', 'en'),
+                'itemId': item_id,
+                'startdate': (now - timedelta(days=lookback_days)).date().isoformat(),
+                'enddate': now.date().isoformat(),
+                'after': '',
+            },
+        )
+        results = (data or {}).get('search', {}).get('results', [])
+        max_records = archive_config.get('max_records', 10)
+        articles: List[Article] = []
+        seen_urls = set()
+
+        for result in results:
+            language = next(
+                (
+                    item for item in result.get('languages', [])
+                    if item.get('language', {}).get('name') == archive_config.get('language', 'en')
+                ),
+                {},
+            )
+            title = self._nested_value(language, 'mainTitle', 'jsonValue', 'value')
+            article_url = self._nested_value(language, 'mainTitleLink', 'url')
+            if article_url.startswith('/'):
+                article_url = f"https://www.imf.org{article_url}"
+            if not title or not article_url or article_url in seen_urls:
+                continue
+            if not article_url.startswith('https://www.imf.org/'):
+                continue
+
+            description_html = self._nested_value(result, 'description', 'jsonValue', 'value')
+            description = BeautifulSoup(description_html, 'html.parser').get_text(' ', strip=True)
+            published_at = self._parse_imf_datetime(
+                self._nested_value(result, 'fromDateTime', 'jsonValue', 'value'),
+                now,
+            )
+            seen_urls.add(article_url)
+            articles.append(
+                Article(
+                    title=title,
+                    description=description or "IMF What's New 官网归档标题索引",
+                    content=description or title,
+                    url=article_url,
+                    source="IMF What's New Archive",
+                    published_at=published_at,
+                    region=archive_config.get('region', 'international'),
+                    priority=archive_config.get('priority', 5),
+                    tags=archive_config.get('sectors', ['finance', 'policy']),
+                    headline_only=True,
+                )
+            )
+            if len(articles) >= max_records:
+                break
+        return articles
+
+    @staticmethod
+    def _imf_archive_item_id(page_html: str) -> str:
+        """从 IMF Next.js 页面数据中读取 What's New 归档的组件 ID。"""
+        try:
+            soup = BeautifulSoup(page_html, 'html.parser')
+            data_tag = soup.find('script', id='__NEXT_DATA__')
+            data = json.loads(data_tag.string) if data_tag and data_tag.string else {}
+            return (
+                data.get('props', {})
+                .get('pageProps', {})
+                .get('page', {})
+                .get('layout', {})
+                .get('sitecore', {})
+                .get('route', {})
+                .get('itemId', '')
+            )
+        except (json.JSONDecodeError, AttributeError, TypeError):
+            return ''
+
+    @staticmethod
+    def _nested_value(data: Dict[str, Any], *keys: str) -> str:
+        """安全读取 IMF 接口的嵌套文本字段。"""
+        value: Any = data
+        for key in keys:
+            if not isinstance(value, dict):
+                return ''
+            value = value.get(key)
+        return value.strip() if isinstance(value, str) else ''
+
+    @staticmethod
+    def _parse_imf_datetime(value: str, fallback: datetime) -> datetime:
+        """解析 IMF 接口 ISO 时间，缺失时保留本轮抓取时间。"""
+        try:
+            return datetime.fromisoformat(value.replace('Z', '+00:00'))
+        except (TypeError, ValueError):
+            return fallback
 
     def fetch_from_gdelt(self) -> List[Article]:
         """从免费 GDELT DOC API 抓取配置化的全球新闻标题。"""
@@ -540,6 +661,31 @@ class NewsFetcher:
                     logger.error(f"请求最终失败: {url}")
                     return None
         
+        return None
+
+    def _request_html(self, url: str) -> Optional[str]:
+        """请求 HTML 页面；访问限制或单源故障不影响其他新闻源。"""
+        for attempt in range(self.retry_attempts):
+            try:
+                response = self.session.get(url, timeout=self.timeout)
+                if response.status_code == 403:
+                    logger.warning("IMF 官网拒绝本轮归档请求（HTTP 403），将继续其他新闻源")
+                    return None
+                if response.status_code == 429:
+                    logger.warning("IMF 官网触发限流（HTTP 429），停止本轮归档请求")
+                    return None
+                response.raise_for_status()
+                return response.text
+            except requests.exceptions.RequestException as exc:
+                logger.warning(
+                    "HTML 请求失败 (尝试 %d/%d): %s",
+                    attempt + 1,
+                    self.retry_attempts,
+                    exc,
+                )
+                if attempt < self.retry_attempts - 1:
+                    time.sleep(self.retry_delay)
+        logger.error("HTML 请求最终失败: %s", url)
         return None
     
     def _deduplicate_articles(self, articles: List[Article]) -> List[Article]:
