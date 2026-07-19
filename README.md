@@ -48,7 +48,8 @@ info-os/
 ├── data/                    # 数据目录
 │   ├── news_cache/          # 新闻缓存（供历史分析使用）
 │   ├── market_cache/        # 市场和舆情快照
-│   └── reports/             # 分析报告（JSON + TXT）
+│   ├── reports/             # 完整分析报告（JSON + Markdown）
+│   └── mobile_reports/      # 移动版 Markdown 报告
 └── logs/                    # 日志目录
     └── news_analyzer.log
 ```
@@ -352,7 +353,8 @@ news_api:
 
 **报告保存位置：**
 - JSON格式: `data/reports/report_*.json`
-- 文本格式: `data/reports/report_*.txt`
+- Markdown 格式: `data/reports/report_*.md`
+- 移动版 Markdown: `data/mobile_reports/mobile_report_*.md`（移除新闻参考资料；表格转为逐项列表，适合手机窄屏阅读）
 - 邮件: 完整 HTML 渲染（表格/粗体/引用块等）
 
 > 表格单元格仅使用简短文本，多个条件以 `；` 分隔。邮件渲染会自动将模型偶发输出的 LaTeX 箭头和单元格内行内列表规范化，避免显示为代码或拥挤文本。
@@ -476,11 +478,14 @@ grep ERROR logs/news_analyzer.log
 ### 查看报告
 
 ```bash
-# 查看最新文本报告
-ls -lt data/reports/*.txt | head -3
+# 查看最新 Markdown 报告
+ls -lt data/reports/*.md | head -3
 
 # 预览最新报告
-cat $(ls -t data/reports/*.txt | head -1) | head -100
+cat $(ls -t data/reports/*.md | head -1) | head -100
+
+# 查看最新移动版报告
+cat $(ls -t data/mobile_reports/*.md | head -1) | head -100
 ```
 
 ### 测试邮件发送
@@ -530,7 +535,7 @@ crontab -e
 ### Q1: 邮件中的表格/粗体没有正常显示？
 
 系统使用 `markdown` 库将 LLM 输出转换为 HTML。如果某些格式未渲染：
-- 检查 LLM 是否正确输出了 Markdown（查看 `data/reports/report_*.txt`）
+- 检查 LLM 是否正确输出了 Markdown（查看 `data/reports/report_*.md`）
 - 如果 LLM 将整个回复包在 ` ```markdown ``` ` 代码块里，系统会自动剥除
 - 表格内不要使用 `- `、`1.` 或换行列表；多个条件用 `；`。渲染器会对历史报告中的行内列表做兼容清理
 - 确认 `requirements.txt` 中的 `markdown>=3.5` 已安装

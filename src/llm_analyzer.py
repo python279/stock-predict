@@ -7,8 +7,13 @@ import logging
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 import json
+import re
 
 logger = logging.getLogger(__name__)
+
+_REPORT_ICON_PATTERN = re.compile(
+    r'[\U0001F000-\U0001FAFF\u2600-\u27BF\uFE0F]'
+)
 
 
 class LLMAnalyzer:
@@ -116,7 +121,9 @@ class LLMAnalyzer:
             user_prompt = self._build_user_prompt(news_summary)
 
             # 调用 LLM 进行分析
-            analysis_text = self._call_llm(system_prompt, user_prompt)
+            analysis_text = self._strip_report_icons(
+                self._call_llm(system_prompt, user_prompt)
+            )
 
             # 历史天数统计
             history_days = len(historical_news) if historical_news else 0
@@ -457,6 +464,7 @@ class LLMAnalyzer:
 - 风险评级矩阵等结构化数据**必须使用 Markdown 表格**（`| 列1 | 列2 |` 格式）
 - 引用/定义/注意事项使用 `> 引用块` 格式
 - 不要输出 HTML 标签，不要使用 LaTeX，不要使用代码块包裹分析文本
+- 禁止使用 Emoji、图标或装饰性符号；仅使用普通文本、Markdown 标题、列表和表格
 - **禁止**输出 `$...$`、`\\(...\\)`、`\\[...\\]`、`\\rightarrow` 等 LaTeX/数学公式语法；事件传导链必须直接使用 Unicode 箭头 `→`
 - 不要在报告开头和结尾添加额外的说明性语句
 
@@ -778,6 +786,11 @@ class LLMAnalyzer:
 
         return system
 
+    @staticmethod
+    def _strip_report_icons(text: str) -> str:
+        """移除模型输出中的 Emoji 和装饰性图标，保持报告纯 Markdown。"""
+        return _REPORT_ICON_PATTERN.sub('', text or '')
+
     def _build_system_prompt(self) -> str:
         """构建精简、固定编号的日报提示词，避免跨章节重复。"""
         focus_areas = self.analysis_config.get("focus_areas", [])
@@ -825,6 +838,7 @@ class LLMAnalyzer:
 ## 格式与篇幅（严格遵守）
 - 仅输出以下**固定 7 个** `###` 主章节，编号不得跳号、不得新增主章节；子章节使用 `####`。
 - 使用标准 Markdown；列表必须以 `- ` 开头；表格行单独成行；不输出 HTML、代码块或 LaTeX。
+- 禁止使用 Emoji、图标或装饰性符号；仅使用普通文本、Markdown 标题、列表和表格。
 - 表格单元格只能写一段简短文本；**禁止**在单元格内使用 `- `、`* `、`1.` 等列表、换行或未转义的 `|`。多个条件必须用中文分号 `；` 分隔。
 - 表格中的每个单元格尽量不超过两句；内容超过时提炼为结论，将补充说明移到表格后的普通列表。
 - 禁止 `$...$`、`\\\\(...\\\\)`、`\\\\rightarrow` 等数学语法，传导链直接使用 `→`。

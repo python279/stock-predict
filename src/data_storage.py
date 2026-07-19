@@ -4,6 +4,7 @@
 
 import json
 import os
+import re
 from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional
 import logging
@@ -27,6 +28,9 @@ class DataStorage:
         self.save_raw_news = storage_config.get('save_raw_news', True)
         self.news_cache_dir = storage_config.get('news_cache_dir', 'data/news_cache')
         self.reports_dir = storage_config.get('reports_dir', 'data/reports')
+        self.mobile_reports_dir = storage_config.get(
+            'mobile_reports_dir', 'data/mobile_reports'
+        )
         self.market_cache_dir = storage_config.get('market_cache_dir', 'data/market_cache')
         self.max_cache_days = storage_config.get('max_cache_days', 7)
         
@@ -35,7 +39,12 @@ class DataStorage:
     
     def _ensure_directories(self):
         """确保必要的目录存在"""
-        for directory in [self.news_cache_dir, self.reports_dir, self.market_cache_dir]:
+        for directory in [
+            self.news_cache_dir,
+            self.reports_dir,
+            self.mobile_reports_dir,
+            self.market_cache_dir,
+        ]:
             if not os.path.exists(directory):
                 os.makedirs(directory, exist_ok=True)
                 logger.info(f"创建目录: {directory}")
@@ -120,26 +129,25 @@ class DataStorage:
             
             logger.info(f"保存分析报告 (JSON): {json_filepath}")
             
-            # 保存纯文本格式
-            text_filename = f"report_{timestamp}.txt"
-            text_filepath = os.path.join(self.reports_dir, text_filename)
+            # 保存 Markdown 格式
+            markdown_filename = f"report_{timestamp}.md"
+            markdown_filepath = os.path.join(self.reports_dir, markdown_filename)
             
-            with open(text_filepath, 'w', encoding='utf-8') as f:
-                f.write(f"全球新闻分析报告\n")
-                f.write(f"{'=' * 60}\n\n")
+            with open(markdown_filepath, 'w', encoding='utf-8') as f:
+                f.write("# 全球新闻分析报告\n\n")
                 f.write(f"分析时间: {analysis_result.get('analysis_time', '')}\n")
                 f.write(f"文章数量: {analysis_result.get('articles_count', 0)}\n")
                 f.write(f"大宗商品数量: {analysis_result.get('commodities_count', 0)}\n")
                 f.write(f"市场行情数量: {analysis_result.get('market_items_count', 0)}\n")
                 f.write(f"覆盖地区: {', '.join(analysis_result.get('regions_covered', []))}\n\n")
-                f.write(f"{'=' * 60}\n\n")
+                f.write("---\n\n")
                 f.write(analysis_result.get('analysis', ''))
                 
                 # 添加参考资料部分
                 all_articles = analysis_result.get('all_articles', [])
                 if all_articles:
                     f.write("\n\n")
-                    f.write(f"{'=' * 60}\n\n")
+                    f.write("---\n\n")
                     f.write("### 参考资料\n\n")
                     f.write(f"本报告基于以下 {len(all_articles)} 篇新闻进行分析：\n\n")
                     
@@ -172,18 +180,102 @@ class DataStorage:
                             published_at = article.get('published_at', '')
                             
                             f.write(f"{i}. **{title}**\n")
-                            f.write(f"   来源: {source}\n")
+                            f.write(f"   - 来源: {source}\n")
                             if published_at:
-                                f.write(f"   时间: {published_at}\n")
-                            f.write(f"   链接: {url}\n\n")
+                                f.write(f"   - 时间: {published_at}\n")
+                            if url:
+                                f.write(f"   - 链接: <{url}>\n")
+                            f.write("\n")
             
-            logger.info(f"保存分析报告 (TXT): {text_filepath}")
+            logger.info(f"保存分析报告 (Markdown): {markdown_filepath}")
             
+            mobile_filepath = self._save_mobile_report(analysis_result, timestamp)
+            logger.info(f"保存移动版报告 (Markdown): {mobile_filepath}")
+
             return json_filepath
         
         except Exception as e:
             logger.error(f"保存分析报告失败: {e}")
             return ""
+
+    def _save_mobile_report(
+        self, analysis_result: Dict[str, Any], timestamp: str
+    ) -> str:
+        """保存适合窄屏阅读的报告：无参考资料，表格转为逐项列表。"""
+        filename = f"mobile_report_{timestamp}.md"
+        filepath = os.path.join(self.mobile_reports_dir, filename)
+        analysis = analysis_result.get('analysis', '')
+        mobile_analysis = self._convert_tables_to_mobile_cards(
+            self._remove_references(analysis)
+        )
+
+        with open(filepath, 'w', encoding='utf-8') as file:
+            file.write("# 全球新闻分析报告（移动版）\n\n")
+            file.write(
+                f"生成时间: {analysis_result.get('analysis_time', '')}\n\n"
+            )
+            file.write(mobile_analysis.strip())
+            file.write("\n")
+        return filepath
+
+    @staticmethod
+    def _remove_references(analysis: str) -> str:
+        """移除报告末尾完整的新闻参考资料章节。"""
+        return re.split(r'\n### 参考资料\s*\n', analysis or '', maxsplit=1)[0]
+
+    @classmethod
+    def _convert_tables_to_mobile_cards(cls, markdown: str) -> str:
+        """将标准 Markdown 表格改为无横向滚动的逐项阅读格式。"""
+        lines = markdown.splitlines()
+        output: List[str] = []
+        index = 0
+
+        while index < len(lines):
+            if (
+                index + 1 < len(lines)
+                and cls._is_table_row(lines[index])
+                and cls._is_table_delimiter(lines[index + 1])
+            ):
+                headers = cls._split_table_row(lines[index])
+                index += 2
+                rows: List[List[str]] = []
+                while index < len(lines) and cls._is_table_row(lines[index]):
+                    rows.append(cls._split_table_row(lines[index]))
+                    index += 1
+
+                for row in rows:
+                    cells = row[:len(headers)] + [''] * max(0, len(headers) - len(row))
+                    if not cells or not cells[0]:
+                        continue
+                    output.append(f"**{headers[0]}：{cells[0]}**")
+                    for header, cell in zip(headers[1:], cells[1:]):
+                        if cell:
+                            output.append(f"- **{header}：** {cell}")
+                    output.append("")
+                continue
+
+            output.append(lines[index])
+            index += 1
+
+        return "\n".join(output)
+
+    @staticmethod
+    def _is_table_row(line: str) -> bool:
+        return line.strip().startswith('|') and line.strip().endswith('|')
+
+    @classmethod
+    def _is_table_delimiter(cls, line: str) -> bool:
+        if not cls._is_table_row(line):
+            return False
+        return all(
+            re.fullmatch(r':?-{3,}:?', cell.strip()) is not None
+            for cell in cls._split_table_row(line)
+        )
+
+    @staticmethod
+    def _split_table_row(line: str) -> List[str]:
+        cells = re.split(r'(?<!\\)\|', line.strip().strip('|'))
+        return [cell.strip().replace(r'\|', '|') for cell in cells]
     
     def clean_old_cache(self):
         """清理过期的缓存文件"""

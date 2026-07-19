@@ -375,6 +375,7 @@ storage:
   save_raw_news: true
   news_cache_dir: "data/news_cache"
   reports_dir: "data/reports"
+  mobile_reports_dir: "data/mobile_reports"
   market_cache_dir: "data/market_cache"
   historical_news_days: 14
   historical_news_max_per_day: 25

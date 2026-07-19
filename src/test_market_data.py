@@ -1,10 +1,13 @@
 """市场数据、行业标签和舆情摘要的离线单元测试。"""
 
 import json
+import tempfile
 import unittest
 from datetime import datetime, timezone
+from pathlib import Path
 from unittest.mock import Mock
 
+from data_storage import DataStorage
 from market_data_fetcher import MarketDataFetcher
 from news_fetcher import Article, NewsFetcher
 from sentiment_fetcher import SentimentFetcher
@@ -257,6 +260,48 @@ class IndustryTagAndSentimentTest(unittest.TestCase):
         self.assertEqual(articles[0].tags, ["finance", "policy"])
 
 
+class MobileReportStorageTest(unittest.TestCase):
+    def test_mobile_report_removes_references_and_converts_tables(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            storage = DataStorage(
+                {
+                    "storage": {
+                        "news_cache_dir": str(root / "news_cache"),
+                        "reports_dir": str(root / "reports"),
+                        "mobile_reports_dir": str(root / "mobile_reports"),
+                        "market_cache_dir": str(root / "market_cache"),
+                    }
+                }
+            )
+            storage.save_analysis_report(
+                {
+                    "analysis_time": "2026-07-19T19:00:00",
+                    "analysis": (
+                        "### 1. 今日决策摘要\n\n"
+                        "| 行业 | 当前状态 | 风险 |\n"
+                        "| :--- | :--- | :--- |\n"
+                        "| 科技 | 回调 | 高波动 |\n\n"
+                        "本报告仅为基于公开信息的情景分析，不构成投资建议。\n\n"
+                        "### 参考资料\n\n"
+                        "1. **不应出现在移动版的新闻**"
+                    ),
+                    "regions_covered": [],
+                    "all_articles": [],
+                }
+            )
+
+            mobile_report = next((root / "mobile_reports").glob("*.md"))
+            content = mobile_report.read_text(encoding="utf-8")
+
+            self.assertIn("# 全球新闻分析报告（移动版）", content)
+            self.assertIn("**行业：科技**", content)
+            self.assertIn("- **当前状态：** 回调", content)
+            self.assertNotIn("| :---", content)
+            self.assertNotIn("参考资料", content)
+            self.assertNotIn("不应出现在移动版的新闻", content)
+
+
 class IndustryReportPromptTest(unittest.TestCase):
     def test_prompt_requires_data_backed_industry_matrix(self):
         analyzer = object.__new__(LLMAnalyzer)
@@ -276,6 +321,13 @@ class IndustryReportPromptTest(unittest.TestCase):
         self.assertIn("科技急跌风险监测", prompt)
         self.assertIn("美国政治热点与全球传导", prompt)
         self.assertIn("证据不足", prompt)
+
+    def test_report_icons_are_removed_without_affecting_markdown(self):
+        cleaned = LLMAnalyzer._strip_report_icons(
+            "### 摘要 📈\n\n- 风险 ⚠️：价格上行 → 保持谨慎"
+        )
+
+        self.assertEqual(cleaned, "### 摘要 \n\n- 风险 ：价格上行 → 保持谨慎")
 
 
 class MarkdownFormattingTest(unittest.TestCase):
