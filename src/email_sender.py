@@ -436,6 +436,25 @@ class EmailSender:
             text,
         )
 
+        # 表格单元格中的 Markdown 列表无法按预期换行渲染，会令内容拥挤。
+        # 将模型偶发输出的行内列表规范为短句，用中文分号保留并列关系。
+        def normalize_table_row(line: str) -> str:
+            if not line.lstrip().startswith("|"):
+                return line
+            cells = line.split("|")
+            if len(cells) < 3:
+                return line
+            normalized_cells = [cells[0]]
+            for cell in cells[1:-1]:
+                normalized = re.sub(r"^\s*[-*]\s+", "", cell)
+                normalized = re.sub(r"\s+(?:[-*]|\d+\.)\s+", "；", normalized)
+                normalized = re.sub(r"；\s*；", "；", normalized)
+                normalized_cells.append(normalized)
+            normalized_cells.append(cells[-1])
+            return "|".join(normalized_cells)
+
+        text = "\n".join(normalize_table_row(line) for line in text.splitlines())
+
         extensions = [
             'extra',       # tables, fenced_code, footnotes, attr_list, def_list, abbr
             'sane_lists',  # 严格列表解析

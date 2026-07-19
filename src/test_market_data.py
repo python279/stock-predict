@@ -183,10 +183,11 @@ class IndustryReportPromptTest(unittest.TestCase):
 
         prompt = analyzer._build_system_prompt()
 
-        self.assertIn("A股重点行业短期趋势矩阵", prompt)
-        self.assertIn("美股行业短期趋势矩阵", prompt)
-        self.assertIn("A股科技急跌风险监测与合理解释", prompt)
-        self.assertIn("数据缺失，仅作新闻情景推演", prompt)
+        self.assertIn("固定 7 个", prompt)
+        self.assertIn("A股：行业趋势与科技急跌预警", prompt)
+        self.assertIn("美股：行业与风险偏好", prompt)
+        self.assertIn("科技急跌风险监测", prompt)
+        self.assertIn("证据不足", prompt)
 
 
 class MarkdownFormattingTest(unittest.TestCase):
@@ -199,6 +200,17 @@ class MarkdownFormattingTest(unittest.TestCase):
         self.assertIn("军事冲突 → 能源风险", html)
         self.assertNotIn(r"\rightarrow", html)
         self.assertNotIn("<code>", html)
+
+    def test_inline_lists_inside_table_cells_are_normalized(self):
+        html = EmailSender({})._markdown_to_html(
+            "| 风险 | 信号 |\n"
+            "| --- | --- |\n"
+            "| 中东 | - 冲突升级 - 航道受阻 1. 能源上涨 |"
+        )
+
+        self.assertIn("<table>", html)
+        self.assertIn("冲突升级；航道受阻；能源上涨", html)
+        self.assertNotIn(" - 冲突升级", html)
 
 
 if __name__ == "__main__":
