@@ -67,7 +67,7 @@ class EmailSender:
         """
         try:
             # 构建邮件主题
-            date_str = datetime.now().strftime('%Y年%m月%d日')
+            date_str = datetime.now().strftime('%Y年%m月%d日 %H:%M')
             subject = f"{subject_prefix} - {date_str}"
             
             # 构建邮件内容
