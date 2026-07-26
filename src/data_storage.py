@@ -119,6 +119,12 @@ class DataStorage:
         """
         try:
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            # 所有输出共用同一份规范化正文：桌面 Markdown 保留表格，移动版仅改变排版。
+            raw_analysis = analysis_result.get('analysis', '')
+            normalized_analysis = self._normalize_report_markdown(
+                raw_analysis
+            )
+            analysis_result['analysis'] = normalized_analysis
             
             # 保存 JSON 格式
             json_filename = f"report_{timestamp}.json"
@@ -189,7 +195,9 @@ class DataStorage:
             
             logger.info(f"保存分析报告 (Markdown): {markdown_filepath}")
             
-            mobile_filepath = self._save_mobile_report(analysis_result, timestamp)
+            mobile_filepath = self._save_mobile_report(
+                analysis_result, timestamp, source_analysis=raw_analysis
+            )
             logger.info(f"保存移动版报告 (Markdown): {mobile_filepath}")
 
             return json_filepath
@@ -199,20 +207,35 @@ class DataStorage:
             return ""
 
     def _save_mobile_report(
-        self, analysis_result: Dict[str, Any], timestamp: str
+        self,
+        analysis_result: Dict[str, Any],
+        timestamp: str,
+        source_analysis: Optional[str] = None,
     ) -> str:
         """保存适合窄屏阅读的报告：无参考资料，表格转为逐项列表。"""
         filename = f"mobile_report_{timestamp}.md"
         filepath = os.path.join(self.mobile_reports_dir, filename)
-        analysis = analysis_result.get('analysis', '')
-        mobile_analysis = self._convert_tables_to_mobile_cards(
-            self._remove_references(analysis)
+        analysis = (
+            source_analysis
+            if source_analysis is not None
+            else analysis_result.get('analysis', '')
+        )
+        # 移动版始终从桌面版使用的同一份 analysis 派生，只移除参考资料并改变排版，
+        # 不摘要、不改写正文，确保核心内容一致。
+        mobile_analysis = self._normalize_mobile_markdown(
+            self._convert_tables_to_mobile_cards(
+                self._remove_references(analysis)
+            )
         )
 
         with open(filepath, 'w', encoding='utf-8') as file:
             file.write("# 全球新闻分析报告（移动版）\n\n")
+            file.write(f"> 生成时间：{analysis_result.get('analysis_time', '')}\n")
             file.write(
-                f"生成时间: {analysis_result.get('analysis_time', '')}\n\n"
+                f"> 数据概览：新闻 {analysis_result.get('articles_count', 0)} 篇；"
+                f"大宗商品 {analysis_result.get('commodities_count', 0)} 项；"
+                f"市场行情 {analysis_result.get('market_items_count', 0)} 项；"
+                f"宏观指标 {analysis_result.get('macro_items_count', 0)} 项\n\n"
             )
             file.write(mobile_analysis.strip())
             file.write("\n")
@@ -224,11 +247,66 @@ class DataStorage:
         return re.split(r'\n### 参考资料\s*\n', analysis or '', maxsplit=1)[0]
 
     @classmethod
+    def _normalize_report_markdown(cls, markdown: str) -> str:
+        """清理 LLM 偶发的不兼容语法，同时保留桌面版 Markdown 表格。"""
+        text = (markdown or '').strip()
+        text = re.sub(
+            r'^```(?:markdown)?\s*\n([\s\S]*?)\n```\s*$',
+            r'\1',
+            text,
+            flags=re.IGNORECASE,
+        )
+        output: List[str] = []
+
+        for line in text.splitlines():
+            if cls._is_table_row(line):
+                cells = cls._split_table_row(line)
+                normalized_cells = [
+                    cls._normalize_table_cell(cell)
+                    for cell in cells
+                ]
+                output.append("| " + " | ".join(normalized_cells) + " |")
+                continue
+
+            line = re.sub(r'\s*<br\s*/?>\s*', '；', line, flags=re.IGNORECASE)
+            line = re.sub(r'^(\s*)[*+]\s+', r'\1- ', line)
+            line = re.sub(r'^(\s*\d+\.)\s+', r'\1 ', line)
+            line = cls._normalize_bold_markers(line)
+            output.append(line.rstrip())
+
+        return re.sub(r'\n{3,}', '\n\n', "\n".join(output)).strip()
+
+    @classmethod
+    def _normalize_table_cell(cls, cell: str) -> str:
+        """表格单元格只能保留单行短句，列表和 HTML 换行改为中文分号。"""
+        value = re.sub(r'\s*<br\s*/?>\s*', '；', cell, flags=re.IGNORECASE)
+        value = re.sub(r'(^|；)\s*[-*+]\s+', r'\1', value)
+        value = re.sub(r'\s+[-*+]\s+', '；', value)
+        value = re.sub(r'(^|[；\s])(\d+)\.\s+', r'\1\2）', value)
+        value = re.sub(r'；\s*；+', '；', value)
+        value = cls._normalize_bold_markers(value)
+        return value.strip()
+
+    @staticmethod
+    def _normalize_bold_markers(line: str) -> str:
+        """修复粗体内侧空格、标签冒号及与后文粘连。"""
+        line = re.sub(
+            r'(^|[\s(\[：:；;-])\*\*\s+([^*\n]*?\S)\s*\*\*',
+            r'\1**\2**',
+            line,
+        )
+        line = re.sub(r'\*\*([^*\n]+)\*\*\s*[:：]', r'**\1：**', line)
+        line = re.sub(r'(\*\*[^*\n]+：\*\*)(?=\S)', r'\1 ', line)
+        line = re.sub(r'(\*\*)(?=[(（])', r'\1 ', line)
+        return line
+
+    @classmethod
     def _convert_tables_to_mobile_cards(cls, markdown: str) -> str:
         """将标准 Markdown 表格改为无横向滚动的逐项阅读格式。"""
         lines = markdown.splitlines()
         output: List[str] = []
         index = 0
+        current_heading_level = 3
 
         while index < len(lines):
             if (
@@ -247,17 +325,102 @@ class DataStorage:
                     cells = row[:len(headers)] + [''] * max(0, len(headers) - len(row))
                     if not cells or not cells[0]:
                         continue
-                    output.append(f"**{headers[0]}：{cells[0]}**")
+                    title = cls._mobile_card_title(cells[0])
+                    card_level = min(current_heading_level + 1, 6)
+                    output.append(f"{'#' * card_level} {headers[0]}：{title}")
+                    output.append("")
                     for header, cell in zip(headers[1:], cells[1:]):
                         if cell:
-                            output.append(f"- **{header}：** {cell}")
+                            output.extend(cls._mobile_card_field_lines(header, cell))
                     output.append("")
                 continue
 
-            output.append(lines[index])
+            line = lines[index]
+            heading = re.match(r'^(#{1,6})\s+', line)
+            if heading:
+                current_heading_level = len(heading.group(1))
+            output.append(line)
             index += 1
 
         return "\n".join(output)
+
+    @staticmethod
+    def _mobile_card_title(value: str) -> str:
+        """卡片标题不用嵌套加粗，避免 `**标题：**内容**` 的错误边界。"""
+        return value.strip().replace('**', '').replace('__', '')
+
+    @staticmethod
+    def _mobile_card_field_lines(header: str, value: str) -> List[str]:
+        """将表格单元格内的 HTML 换行/伪列表转为合法的嵌套列表。"""
+        parts = [
+            re.sub(r'^[-*+]\s*', '', part.strip()).rstrip('；;')
+            for part in re.split(r'<br\s*/?>', value, flags=re.IGNORECASE)
+            if part.strip()
+        ]
+        if len(parts) <= 1:
+            content = parts[0] if parts else value.strip()
+            return [f"- **{header}：** {content}"]
+        return [
+            f"- **{header}：**",
+            *(f"  - {part}" for part in parts),
+        ]
+
+    @staticmethod
+    def _normalize_mobile_markdown(markdown: str) -> str:
+        """统一移动版列表、标签标点和空行，保持正文语义不变。"""
+        normalized: List[str] = []
+        for line in markdown.splitlines():
+            # 模型偶尔输出 `*   项目`；移动版统一为标准短横线列表。
+            line = re.sub(r'^(\s*)[*+]\s+', r'\1- ', line)
+            # 有序列表只保留一个空格，避免不同阅读器产生额外缩进。
+            line = re.sub(r'^(\s*\d+\.)\s+', r'\1 ', line)
+            line = DataStorage._normalize_bold_markers(line)
+            # 将正文里 `标签： - 条目<br>- 条目` 转成合法嵌套列表。
+            if re.search(r'<br\s*/?>', line, flags=re.IGNORECASE):
+                parts = re.split(r'\s*<br\s*/?>\s*', line, flags=re.IGNORECASE)
+                first = re.match(
+                    r'^(\s*-\s+\*\*[^*\n]+：\*\*)\s*[-*+]\s*(.+)$',
+                    parts[0],
+                )
+                if first:
+                    normalized.append(first.group(1).rstrip())
+                    nested = [first.group(2), *parts[1:]]
+                    normalized.extend(
+                        f"  - {re.sub(r'^[-*+]\s*', '', item.strip()).rstrip('；;')}"
+                        for item in nested
+                        if item.strip()
+                    )
+                    continue
+                line = '；'.join(part.strip() for part in parts if part.strip())
+            # 兼容已被旧版转换为 `标签： - 条目；；- 条目` 的历史移动报告。
+            legacy_nested = re.match(
+                r'^(\s*-\s+\*\*[^*\n]+：\*\*)\s*[-*+]\s*(.+)$',
+                line,
+            )
+            if legacy_nested and re.search(
+                r'[；;]{1,2}\s*-\s+', legacy_nested.group(2)
+            ):
+                nested = re.split(
+                    r'[；;]{1,2}\s*-\s+', legacy_nested.group(2)
+                )
+                normalized.append(legacy_nested.group(1).rstrip())
+                normalized.extend(
+                    f"  - {item.strip().rstrip('；;')}"
+                    for item in nested
+                    if item.strip()
+                )
+                continue
+            # 修复旧版过宽正则留下的 `- *文本**` 单星号起始。
+            line = re.sub(
+                r'^(\s*-\s+)\*([^*\n]+)\*\*',
+                r'\1**\2**',
+                line,
+            )
+            normalized.append(line.rstrip())
+
+        text = "\n".join(normalized)
+        # 连续空行压缩为一行，卡片之间仍保留清晰间距。
+        return re.sub(r'\n{3,}', '\n\n', text).strip()
 
     @staticmethod
     def _is_table_row(line: str) -> bool:

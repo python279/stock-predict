@@ -7,6 +7,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import Mock
 
+import yaml
+
 from data_storage import DataStorage
 from market_data_fetcher import MarketDataFetcher
 from news_fetcher import Article, NewsFetcher
@@ -90,6 +92,115 @@ class MarketDataFetcherTest(unittest.TestCase):
 
         self.assertEqual(items[1]["risk_level"], "高")
         self.assertGreaterEqual(len(items[1]["risk_signals"]), 3)
+
+    def test_config_tracks_requested_listed_us_technology_companies(self):
+        project_root = Path(__file__).resolve().parent.parent
+        expected_us = {"INTC", "NVDA", "TSLA", "AMD", "ORCL"}
+        expected_kr = {"005930.KS", "000660.KS"}
+
+        for filename in ("config.yaml", "config.example.yaml"):
+            config = yaml.safe_load(
+                (project_root / filename).read_text(encoding="utf-8")
+            )
+            assets = config["markets"]["assets"]
+            us_symbols = {
+                asset["symbol"]
+                for asset in assets
+                if asset.get("market") == "US"
+            }
+            kr_symbols = {
+                asset["symbol"]
+                for asset in assets
+                if asset.get("market") == "KR"
+            }
+
+            self.assertTrue(expected_us.issubset(us_symbols))
+            self.assertTrue(expected_kr.issubset(kr_symbols))
+            self.assertNotIn("SPACEX", us_symbols)
+            self.assertIn("ZQ=F", {
+                item["symbol"] for item in config["macro"]["market_proxies"]
+            })
+            self.assertIn("TIP", {
+                item["symbol"] for item in config["macro"]["market_proxies"]
+            })
+
+
+class MacroFetcherTest(unittest.TestCase):
+    def test_fed_funds_futures_are_converted_to_implied_rate(self):
+        from macro_fetcher import MacroFetcher
+
+        fetcher = MacroFetcher(
+            {
+                "macro": {
+                    "enabled": True,
+                    "bls_cpi_enabled": False,
+                    "historical_days": 30,
+                    "retry_attempts": 1,
+                    "market_proxies": [
+                        {
+                            "name": "联邦基金期货隐含利率",
+                            "symbol": "ZQ=F",
+                            "category": "policy_expectation",
+                            "unit": "%",
+                            "transform": "implied_rate_from_100",
+                        }
+                    ],
+                },
+                "fetcher": {"retry_attempts": 1},
+            }
+        )
+        fetcher._fetch_yahoo_rows = Mock(
+            return_value=[
+                {"date": "2026-07-20", "close": 96.0},
+                {"date": "2026-07-21", "close": 96.2},
+                {"date": "2026-07-22", "close": 96.5},
+            ]
+        )
+
+        result = fetcher.fetch_all_macro()
+
+        self.assertEqual(len(result["items"]), 1)
+        item = result["items"][0]
+        self.assertEqual(item["value"], 3.5)
+        self.assertEqual(item["raw_price"], 96.5)
+        self.assertEqual(item["change_1d_pts"], -0.3)
+        self.assertTrue(item["is_proxy"])
+        self.assertFalse(item["is_official"])
+
+    def test_bls_failure_is_recorded_without_stopping_proxies(self):
+        from macro_fetcher import MacroFetcher
+
+        fetcher = MacroFetcher(
+            {
+                "macro": {
+                    "enabled": True,
+                    "bls_cpi_enabled": True,
+                    "retry_attempts": 1,
+                    "market_proxies": [
+                        {
+                            "name": "通胀保值债ETF(TIP)",
+                            "symbol": "TIP",
+                            "category": "inflation",
+                            "unit": "USD",
+                        }
+                    ],
+                },
+                "fetcher": {"retry_attempts": 1},
+            }
+        )
+        fetcher._fetch_bls_cpi = Mock(side_effect=RuntimeError("BLS unavailable"))
+        fetcher._fetch_yahoo_rows = Mock(
+            return_value=[
+                {"date": "2026-07-21", "close": 107.0},
+                {"date": "2026-07-22", "close": 107.5},
+            ]
+        )
+
+        result = fetcher.fetch_all_macro()
+
+        self.assertEqual(len(result["items"]), 1)
+        self.assertEqual(result["items"][0]["symbol"], "TIP")
+        self.assertTrue(any("BLS CPI" in error for error in result["errors"]))
 
 
 class IndustryTagAndSentimentTest(unittest.TestCase):
@@ -277,11 +388,23 @@ class MobileReportStorageTest(unittest.TestCase):
             storage.save_analysis_report(
                 {
                     "analysis_time": "2026-07-19T19:00:00",
+                    "articles_count": 50,
+                    "commodities_count": 8,
+                    "market_items_count": 19,
+                    "macro_items_count": 4,
                     "analysis": (
                         "### 1. 今日决策摘要\n\n"
                         "| 行业 | 当前状态 | 风险 |\n"
                         "| :--- | :--- | :--- |\n"
-                        "| 科技 | 回调 | 高波动 |\n\n"
+                        "| **科技** | 回调 | 高波动 |\n\n"
+                        "### 2. 风险监测\n\n"
+                        "*   **已发生事实/信号**: - 冲突升级；<br>- 制裁升级\n"
+                        "*   **当前应对**: 保持谨慎。\n\n"
+                        "#### 2.1 政策传导\n\n"
+                        "| 事件 | 影响 |\n"
+                        "| --- | --- |\n"
+                        "| 加息预期 | - **科技** (估值承压)；<br>- **消费** (信贷承压) |\n\n"
+                        "** 香港市场：**\n\n"
                         "本报告仅为基于公开信息的情景分析，不构成投资建议。\n\n"
                         "### 参考资料\n\n"
                         "1. **不应出现在移动版的新闻**"
@@ -293,13 +416,42 @@ class MobileReportStorageTest(unittest.TestCase):
 
             mobile_report = next((root / "mobile_reports").glob("*.md"))
             content = mobile_report.read_text(encoding="utf-8")
+            desktop_report = next((root / "reports").glob("*.md"))
+            desktop_content = desktop_report.read_text(encoding="utf-8")
 
             self.assertIn("# 全球新闻分析报告（移动版）", content)
-            self.assertIn("**行业：科技**", content)
+            self.assertIn("> 数据概览：新闻 50 篇；大宗商品 8 项；市场行情 19 项；宏观指标 4 项", content)
+            self.assertIn("#### 行业：科技", content)
             self.assertIn("- **当前状态：** 回调", content)
+            self.assertIn(
+                "- **已发生事实/信号：**\n  - 冲突升级\n  - 制裁升级",
+                content,
+            )
+            self.assertIn("- **当前应对：** 保持谨慎。", content)
+            self.assertIn("##### 事件：加息预期", content)
+            self.assertIn(
+                "- **影响：**\n  - **科技** (估值承压)\n  - **消费** (信贷承压)",
+                content,
+            )
+            self.assertIn("**香港市场：**", content)
+            self.assertNotIn("**行业：**科技**", content)
+            self.assertNotIn("*   ", content)
+            self.assertNotIn("<br", content)
+            self.assertNotIn("** 香港市场", content)
             self.assertNotIn("| :---", content)
             self.assertNotIn("参考资料", content)
             self.assertNotIn("不应出现在移动版的新闻", content)
+            self.assertIn(
+                "本报告仅为基于公开信息的情景分析，不构成投资建议。",
+                content,
+            )
+            self.assertIn(
+                "| 加息预期 | **科技** (估值承压)；**消费** (信贷承压) |",
+                desktop_content,
+            )
+            self.assertIn("**香港市场：**", desktop_content)
+            self.assertNotIn("<br", desktop_content)
+            self.assertNotIn("** 香港市场", desktop_content)
 
 
 class IndustryReportPromptTest(unittest.TestCase):
@@ -321,6 +473,11 @@ class IndustryReportPromptTest(unittest.TestCase):
         self.assertIn("科技急跌风险监测", prompt)
         self.assertIn("美国政治热点与全球传导", prompt)
         self.assertIn("证据不足", prompt)
+        self.assertIn("已提供的美国科技公司个股行情", prompt)
+        self.assertIn("相对 QQQ/SMH 强弱", prompt)
+        self.assertIn("SpaceX 等未上市公司的新闻", prompt)
+        self.assertIn("美国通胀与美联储利率预期", prompt)
+        self.assertIn("韩国科技股", prompt)
 
     def test_report_icons_are_removed_without_affecting_markdown(self):
         cleaned = LLMAnalyzer._strip_report_icons(

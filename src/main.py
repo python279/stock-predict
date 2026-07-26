@@ -14,6 +14,7 @@ from logger_config import setup_logger
 from news_fetcher import NewsFetcher
 from commodity_fetcher import CommodityFetcher
 from market_data_fetcher import MarketDataFetcher
+from macro_fetcher import MacroFetcher
 from sentiment_fetcher import SentimentFetcher
 from llm_analyzer import LLMAnalyzer
 from email_sender import EmailSender
@@ -51,6 +52,7 @@ class NewsAnalyzerApp:
             self.fetcher = NewsFetcher(self.config)
             self.commodity_fetcher = CommodityFetcher(self.config)
             self.market_data_fetcher = MarketDataFetcher(self.config)
+            self.macro_fetcher = MacroFetcher(self.config)
             self.sentiment_fetcher = SentimentFetcher(self.config)
             self.analyzer = LLMAnalyzer(self.config)
             self.email_sender = EmailSender(self.config)
@@ -92,10 +94,15 @@ class NewsAnalyzerApp:
             else:
                 logger.info("未抓取到大宗商品数据，将仅基于新闻进行商品分析")
             
-            # 1.6 抓取美股/A股市场与行业趋势
+            # 1.6 抓取美股/A股/韩股市场与行业趋势
             logger.info("步骤 1.6/5: 抓取市场与行业行情...")
             market_data = self.market_data_fetcher.fetch_all_markets()
             logger.info("成功抓取 %d 个市场资产", len(market_data.get("items", [])))
+
+            # 1.65 抓取美国通胀与美联储利率预期相关宏观输入
+            logger.info("步骤 1.65/5: 抓取宏观指标（通胀/利率预期）...")
+            macro_data = self.macro_fetcher.fetch_all_macro()
+            logger.info("成功抓取 %d 个宏观指标", len(macro_data.get("items", [])))
 
             # 1.7 汇总行业舆情
             logger.info("步骤 1.7/5: 汇总行业舆情...")
@@ -126,6 +133,7 @@ class NewsAnalyzerApp:
                 commodity_data=commodity_data,
                 market_data=market_data,
                 sentiment_data=sentiment_data,
+                macro_data=macro_data,
             )
             
             if not analysis_result or not analysis_result.get('analysis'):

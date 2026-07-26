@@ -87,6 +87,7 @@ class LLMAnalyzer:
         commodity_data: Dict[str, Any] = None,
         market_data: Dict[str, Any] = None,
         sentiment_data: Dict[str, Any] = None,
+        macro_data: Dict[str, Any] = None,
     ) -> Dict[str, Any]:
         """
         分析新闻文章
@@ -98,6 +99,7 @@ class LLMAnalyzer:
             commodity_data: 大宗商品价格、趋势指标和可投资标的数据
             market_data: 美股/A股指数及行业趋势数据
             sentiment_data: 按行业聚合的新闻/舆情摘要
+            macro_data: 美国通胀与美联储利率预期相关宏观输入
 
         Returns:
             分析结果字典
@@ -114,6 +116,7 @@ class LLMAnalyzer:
                 commodity_data or {},
                 market_data or {},
                 sentiment_data or {},
+                macro_data or {},
             )
 
             # 构建 system / user 两段提示词
@@ -130,6 +133,7 @@ class LLMAnalyzer:
             history_count = sum(len(v) for v in historical_news.values()) if historical_news else 0
             commodity_items = (commodity_data or {}).get('items', [])
             market_items = (market_data or {}).get('items', [])
+            macro_items = (macro_data or {}).get('items', [])
 
             result = {
                 'analysis_time': datetime.now().isoformat(),
@@ -140,6 +144,8 @@ class LLMAnalyzer:
                 'commodity_data': commodity_data or {},
                 'market_items_count': len(market_items),
                 'market_data': market_data or {},
+                'macro_items_count': len(macro_items),
+                'macro_data': macro_data or {},
                 'sentiment_data': sentiment_data or {},
                 'regions_covered': self._get_regions(articles),
                 'analysis': analysis_text,
@@ -164,6 +170,7 @@ class LLMAnalyzer:
         commodity_data: Dict[str, Any] = None,
         market_data: Dict[str, Any] = None,
         sentiment_data: Dict[str, Any] = None,
+        macro_data: Dict[str, Any] = None,
     ) -> str:
         """
         准备新闻摘要，包含今日新闻和历史新闻，每条均标注日期
@@ -174,6 +181,7 @@ class LLMAnalyzer:
             commodity_data: 大宗商品价格、趋势指标和投资标的数据
             market_data: 美股/A股指数及行业趋势数据
             sentiment_data: 按行业聚合的新闻/舆情摘要
+            macro_data: 美国通胀与美联储利率预期相关宏观输入
 
         Returns:
             带日期标注的完整新闻摘要文本
@@ -299,10 +307,48 @@ class LLMAnalyzer:
                     + "；".join(commodity_data.get('errors', [])[:5])
                 )
 
-        # ── 美股/A股行业行情 ───────────────────────────────────────
+        # ── 美国通胀与美联储利率预期 ───────────────────────────────
+        if macro_data and (macro_data.get('items') or macro_data.get('errors')):
+            summary_parts.append(
+                "\n\n# 【美国通胀与美联储利率预期】"
+                "\n> 官方CPI优先使用 BLS；若缺失则明确写“数据缺失/未采集”。"
+                "联邦基金期货隐含利率=100-期货报价，反映市场对政策利率路径的定价，"
+                "不是 CME FedWatch 会议加息概率。TIPS ETF 是市场对通胀/实际利率的综合定价代理，"
+                "不得表述为官方CPI同比。"
+            )
+            if macro_data.get('items'):
+                summary_parts.append(
+                    "\n| 指标 | 类别 | 数据日期 | 数值 | 单位 | 1日变化 | 5日变化 | 20日变化 | 来源 | 说明 |"
+                )
+                summary_parts.append(
+                    "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"
+                )
+                for item in macro_data.get('items', []):
+                    summary_parts.append(
+                        "| {name} | {category} | {date} | {value} | {unit} | {chg1} | "
+                        "{chg5} | {chg20} | {source} | {note} |".format(
+                            name=item.get('name', ''),
+                            category=item.get('category', ''),
+                            date=item.get('value_date', ''),
+                            value=self._format_number(item.get('value')),
+                            unit=item.get('unit', ''),
+                            chg1=self._format_macro_change(item, 1),
+                            chg5=self._format_macro_change(item, 5),
+                            chg20=self._format_macro_change(item, 20),
+                            source=item.get('source', ''),
+                            note=(item.get('interpretation') or '')[:60],
+                        )
+                    )
+            if macro_data.get('errors'):
+                summary_parts.append(
+                    "\n> 部分宏观数据抓取失败或未采集："
+                    + "；".join(macro_data.get('errors', [])[:5])
+                )
+
+        # ── 美股/A股市场、行业与重点个股行情 ───────────────────────
         if market_data and market_data.get('items'):
             summary_parts.append(
-                "\n\n# 【美股与A股市场/行业趋势数据】"
+                "\n\n# 【美股与A股市场/行业/重点个股趋势数据】"
                 "\n> 行情为程序抓取的日线数据。分析时必须标注数据日期；"
                 "不得把过期收盘数据表述为盘中实时行情。"
             )
@@ -374,6 +420,27 @@ class LLMAnalyzer:
             return f"{float(value):.2f}"
         except (TypeError, ValueError):
             return str(value)
+
+    @staticmethod
+    def _format_macro_change(item: Dict[str, Any], periods: int) -> str:
+        """宏观指标优先显示点数变化，其次百分比变化。"""
+        points_key = {
+            1: "change_1d_pts",
+            5: "change_5d_pts",
+            20: "change_20d_pts",
+        }.get(periods)
+        pct_key = {
+            1: "change_1d_pct",
+            5: "change_5d_pct",
+            20: "change_20d_pct",
+        }.get(periods)
+        if points_key and item.get(points_key) is not None:
+            return f"{float(item[points_key]):+.2f}pt"
+        if pct_key and item.get(pct_key) is not None:
+            return f"{float(item[pct_key]):+.2f}%"
+        if periods == 1 and item.get("change_1m_pct_pts") is not None:
+            return f"{float(item['change_1m_pct_pts']):+.2f}pt"
+        return "N/A"
 
     @staticmethod
     def _format_pct(value: Any) -> str:
@@ -477,7 +544,7 @@ class LLMAnalyzer:
 - A股分析须结合中国特色市场环境（政策市特征、北上资金、融资融券等）
 - 黑天鹅投资策略须兼顾防守（对冲）与进攻（收益最大化）两个维度
 - 大宗商品分析必须同时结合程序抓取的价格趋势数据与相关新闻驱动因素，避免只看单日涨跌
-- 对美股与A股行业的短期判断必须优先引用【美股与A股市场/行业趋势数据】、【行业舆情摘要】和对应政策/新闻；若数据缺失必须明确写“数据缺失，仅作新闻情景推演”
+- 对美股与A股行业的短期判断必须优先引用【美股与A股市场/行业/重点个股趋势数据】、【行业舆情摘要】和对应政策/新闻；若数据缺失必须明确写“数据缺失，仅作新闻情景推演”
 - 所有行业预测均须给出基准情景、核心催化、反向/失效信号和仓位上限，不得承诺收益或把主观判断表述为确定事实
 
 ## 报告结构
@@ -802,10 +869,16 @@ class LLMAnalyzer:
             )
         )
         focus_text = "、".join(focus_areas[:8]) or "全球宏观、地缘风险与多市场配置"
+        us_market_focus = "；".join(
+            self.analysis_config.get(
+                "us_market_focus",
+                ["科技/AI/半导体与存储", "金融与利率传导", "必需及可选消费"],
+            )
+        )
 
         a_share_section = """
 ### 4. A股：行业趋势与科技急跌预警
-仅使用【美股与A股市场/行业趋势数据】、【行业舆情摘要】、政策/新闻与历史新闻。
+仅使用【美股与A股市场/行业/重点个股趋势数据】、【行业舆情摘要】、政策/新闻与历史新闻。
 
 #### 4.1 市场与行业矩阵
 必须用一张表覆盖**科技（芯片、AI、存储）**、**金融（银行、券商、保险）**、**大消费（必需/可选）**：
@@ -861,21 +934,23 @@ class LLMAnalyzer:
 - 美国大选、党派立场或中东战争之间若无直接证据，只能写“相关性/共同驱动假设”，不得宣称选举“导致”战争或特定市场走势；必须列出可证伪条件。
 
 ### 3. 宏观与跨资产传导
-将全球增长、央行、贸易、能源/贵金属/工业金属/农产品合并分析。
+将全球增长、央行、贸易、能源/贵金属/工业金属/农产品、美国通胀与利率预期合并分析。
 - 仅分析输入中有行情或新闻支持的 3–5 个变量。
+- 若提供【美国通胀与美联储利率预期】，优先引用数据日期，区分官方CPI与市场代理；联邦基金期货隐含利率上升表示市场定价更偏鹰/加息，下降更偏鸽/降息或按兵不动，不得写成 CME FedWatch 概率。
 - 使用一张表：`变量 | 数据日期/趋势 | 核心驱动 | 对股市行业的传导 | 失效信号`。
 - 不另列商品标的清单；与各市场的具体行业建议仅在第 4–6 章出现。
 
 {a_share_section}
 
 ### 5. 美股：行业与风险偏好
-- 使用 SPY/QQQ、行业 ETF、VIX 和新闻数据，重点覆盖科技/AI/半导体、金融、必需及可选消费。
+- 使用 SPY/QQQ、行业 ETF、VIX、已提供的美国科技公司个股行情、通胀/利率预期和新闻数据，重点覆盖：{us_market_focus}。
+- 对重点科技股比较 1日/5日/20日涨跌、20日回撤、波动率及相对 QQQ/SMH 强弱；不得把 SpaceX 等未上市公司的新闻当作股票价格数据。
 - 用一张表：`行业 | 当前状态 | {short_term}情景 | 催化/风险 | 关注工具`。
 - 不重复第 2 章黑天鹅描述，只说明美股的直接传导和失效条件。
 
 ### 6. 港股与日股：联动观察
 - 各用 1–2 条要点，聚焦与 A股/美股的联动、汇率、资金流或供应链差异。
-- 证据不足时明确写“本日无新增高置信度信号”，不得为了完整性编造标的。
+- 若输入含韩国科技股（如三星、SK海力士），可追加 1 条存储/半导体供应链联动观察；证据不足时明确写“本日无新增高置信度信号”，不得为了完整性编造标的。
 
 ### 7. 未来路径与执行清单
 #### 7.1 基准与风险情景
