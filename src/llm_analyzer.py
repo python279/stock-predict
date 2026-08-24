@@ -99,7 +99,7 @@ class LLMAnalyzer:
             commodity_data: 大宗商品价格、趋势指标和可投资标的数据
             market_data: 美股/A股指数及行业趋势数据
             sentiment_data: 按行业聚合的新闻/舆情摘要
-            macro_data: 美国通胀与美联储利率预期相关宏观输入
+            macro_data: 财政债务、货币供应、通胀与利率预期相关宏观输入
 
         Returns:
             分析结果字典
@@ -181,7 +181,7 @@ class LLMAnalyzer:
             commodity_data: 大宗商品价格、趋势指标和投资标的数据
             market_data: 美股/A股指数及行业趋势数据
             sentiment_data: 按行业聚合的新闻/舆情摘要
-            macro_data: 美国通胀与美联储利率预期相关宏观输入
+            macro_data: 财政债务、货币供应、通胀与利率预期相关宏观输入
 
         Returns:
             带日期标注的完整新闻摘要文本
@@ -307,34 +307,36 @@ class LLMAnalyzer:
                     + "；".join(commodity_data.get('errors', [])[:5])
                 )
 
-        # ── 美国通胀与美联储利率预期 ───────────────────────────────
+        # ── 全球流动性、财政债务、通胀与利率预期 ───────────────────
         if macro_data and (macro_data.get('items') or macro_data.get('errors')):
             summary_parts.append(
-                "\n\n# 【美国通胀与美联储利率预期】"
+                "\n\n# 【全球流动性、财政债务与利率数据】"
                 "\n> 官方CPI优先使用 BLS；若缺失则明确写“数据缺失/未采集”。"
+                "美国联邦债务仅使用 U.S. Treasury Fiscal Data；中国M2仅使用中国人民银行。"
+                "债务扩张和M2增长不能直接等同于资产上涨，必须结合利率、信用需求、通胀和估值判断。"
                 "联邦基金期货隐含利率=100-期货报价，反映市场对政策利率路径的定价，"
                 "不是 CME FedWatch 会议加息概率。TIPS ETF 是市场对通胀/实际利率的综合定价代理，"
                 "不得表述为官方CPI同比。"
             )
             if macro_data.get('items'):
                 summary_parts.append(
-                    "\n| 指标 | 类别 | 数据日期 | 数值 | 单位 | 1日变化 | 5日变化 | 20日变化 | 来源 | 说明 |"
+                    "\n| 指标 | 类别 | 数据日期 | 数值 | 单位 | 短期变化 | 同比/1年 | 5年CAGR | 来源 | 说明 |"
                 )
                 summary_parts.append(
                     "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"
                 )
                 for item in macro_data.get('items', []):
                     summary_parts.append(
-                        "| {name} | {category} | {date} | {value} | {unit} | {chg1} | "
-                        "{chg5} | {chg20} | {source} | {note} |".format(
+                        "| {name} | {category} | {date} | {value} | {unit} | {short_change} | "
+                        "{annual_change} | {cagr5} | {source} | {note} |".format(
                             name=item.get('name', ''),
                             category=item.get('category', ''),
                             date=item.get('value_date', ''),
                             value=self._format_number(item.get('value')),
                             unit=item.get('unit', ''),
-                            chg1=self._format_macro_change(item, 1),
-                            chg5=self._format_macro_change(item, 5),
-                            chg20=self._format_macro_change(item, 20),
+                            short_change=self._format_macro_change(item, 1),
+                            annual_change=self._format_macro_annual_change(item),
+                            cagr5=self._format_pct(item.get('cagr_5y_pct')),
                             source=item.get('source', ''),
                             note=(item.get('interpretation') or '')[:60],
                         )
@@ -440,6 +442,15 @@ class LLMAnalyzer:
             return f"{float(item[pct_key]):+.2f}%"
         if periods == 1 and item.get("change_1m_pct_pts") is not None:
             return f"{float(item['change_1m_pct_pts']):+.2f}pt"
+        return "N/A"
+
+    @staticmethod
+    def _format_macro_annual_change(item: Dict[str, Any]) -> str:
+        """格式化同比增速或一年规模变化。"""
+        if item.get("yoy_pct") is not None:
+            return f"{float(item['yoy_pct']):+.2f}% YoY"
+        if item.get("change_1y_pct") is not None:
+            return f"{float(item['change_1y_pct']):+.2f}%"
         return "N/A"
 
     @staticmethod
@@ -868,6 +879,14 @@ class LLMAnalyzer:
                 "short_term_timeframes", ["未来5个交易日", "未来1-4周"]
             )
         )
+        include_long_term = self.analysis_config.get(
+            "include_long_term_outlook", True
+        )
+        long_term = "、".join(
+            self.analysis_config.get(
+                "long_term_timeframes", ["未来5年", "未来10年"]
+            )
+        )
         focus_text = "、".join(focus_areas[:8]) or "全球宏观、地缘风险与多市场配置"
         us_market_focus = "；".join(
             self.analysis_config.get(
@@ -895,6 +914,18 @@ class LLMAnalyzer:
             a_share_section = """
 ### 4. 中国市场观察
 - A股专项已关闭；仅概述与中国市场直接相关的政策、科技供应链和风险事件，不给出个股或行业仓位建议。
+"""
+
+        long_term_section = ""
+        if include_long_term:
+            long_term_section = f"""
+
+#### 7.3 {long_term}结构性资产情景
+- 结合【全球流动性、财政债务与利率数据】、全球增长、人口与生产率、政治格局、去全球化、能源转型和技术资本开支，在全球大类资产及重点行业赛道中筛选最多 5 个**高上行弹性候选**；不得称为“必然疯涨”。
+- 候选范围包括全球股票、主权债、黄金、能源/工业金属、房地产/基础设施、现金/主要货币，以及 AI基础设施、半导体、电力电网、先进制造、医疗等赛道；只选择输入证据支持者，不下钻到个股。
+- 按“预期回报潜力、证据确定性、下行风险”综合排序，用一张表：`排名与候选 | 基准情景名义/实际CAGR | 乐观/悲观CAGR | 核心驱动 | 主要风险与失效条件`。
+- CAGR 只能给宽区间并说明通胀假设；必须区分名义与实际回报。债务或M2增长不能直接推出资产上涨，需明确利率、盈利、供需、估值与信用传导中至少两项机制。
+- 对历史估值、长期盈利、人口或供需数据未提供的资产，降低确定性并写“长期数据未采集”；禁止伪造当前估值、目标点位、概率或精确价格。
 """
 
         return f"""你是一位审慎的全球宏观与多市场分析师。基于提供的新闻、历史新闻、商品、行情和舆情数据，生成一份**短、可执行、无重复**的中文日报。
@@ -934,9 +965,11 @@ class LLMAnalyzer:
 - 美国大选、党派立场或中东战争之间若无直接证据，只能写“相关性/共同驱动假设”，不得宣称选举“导致”战争或特定市场走势；必须列出可证伪条件。
 
 ### 3. 宏观与跨资产传导
-将全球增长、央行、贸易、能源/贵金属/工业金属/农产品、美国通胀与利率预期合并分析。
+将全球增长、央行、贸易、能源/贵金属/工业金属/农产品、美国通胀与利率预期、美国联邦债务和中国M2合并分析。
 - 仅分析输入中有行情或新闻支持的 3–5 个变量。
-- 若提供【美国通胀与美联储利率预期】，优先引用数据日期，区分官方CPI与市场代理；联邦基金期货隐含利率上升表示市场定价更偏鹰/加息，下降更偏鸽/降息或按兵不动，不得写成 CME FedWatch 概率。
+- 若提供【全球流动性、财政债务与利率数据】，优先引用数据日期和来源，区分官方统计与市场代理；联邦基金期货隐含利率上升表示市场定价更偏鹰/加息，下降更偏鸽/降息或按兵不动，不得写成 CME FedWatch 概率。
+- 分析美债时区分债务总额、公众持有和政府内部持有，结合利息负担、期限溢价与美元信用；未采集债务/GDP或利息支出时不得推测具体比例。
+- 分析中国M2时区分“货币规模扩张”与“信用有效需求/资金进入资产市场”，结合通胀、房地产、财政和汇率；不得把M2同比直接写成股市涨幅。
 - 使用一张表：`变量 | 数据日期/趋势 | 核心驱动 | 对股市行业的传导 | 失效信号`。
 - 不另列商品标的清单；与各市场的具体行业建议仅在第 4–6 章出现。
 
@@ -958,7 +991,9 @@ class LLMAnalyzer:
 
 #### 7.2 本周执行与观察
 - 给出不超过 5 条按优先级排序的动作/观察项，覆盖仓位、对冲、事件日历和风险警戒线。
-- 最后一行固定写免责声明：`本报告仅为基于公开信息的情景分析，不构成投资建议。`
+{long_term_section}
+
+- 第 7 章最后一行固定写免责声明：`本报告仅为基于公开信息的情景分析，不构成投资建议。`
 """
 
     def _build_user_prompt(self, news_summary: str) -> str:
@@ -974,6 +1009,14 @@ class LLMAnalyzer:
         """
         today_str = datetime.now().strftime('%Y-%m-%d')
 
+        long_term_instruction = ""
+        if self.analysis_config.get("include_long_term_outlook", True):
+            long_term_instruction = (
+                "第7.3节必须基于已提供的宏观与市场证据，对全球大类资产和重点赛道"
+                "给出未来5年/10年的三情景CAGR宽区间、排序和失效条件；"
+                "不得把债务或M2扩张直接等同于资产上涨。"
+            )
+
         return f"""请基于以下全球新闻、历史新闻、大宗商品、市场行情与行业舆情数据，按照你的分析框架输出完整报告。
 
 今日日期：{today_str}
@@ -984,7 +1027,7 @@ class LLMAnalyzer:
 
 ---
 
-请严格按照报告结构逐章输出分析，不要省略任何章节。**全程使用 Markdown 格式**，表格用 `| 列 |` 语法，重点用 `**粗体**`，列表前后留空行。大宗商品章节必须给出趋势预测、具体投资标的和风控条件。市场和行业章节必须标注所引用数据的日期、缺失项与失效条件。"""
+请严格按照报告结构逐章输出分析，不要省略任何章节。**全程使用 Markdown 格式**，表格用 `| 列 |` 语法，重点用 `**粗体**`，列表前后留空行。第3章应整合大宗商品、财政、货币与利率的跨资产传导，第4至6章给出相关投资工具和风控条件。{long_term_instruction}市场和行业章节必须标注所引用数据的日期、缺失项与失效条件。"""
     
     def _call_llm(self, system_prompt: str, user_prompt: str) -> str:
         """

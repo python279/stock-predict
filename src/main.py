@@ -99,8 +99,8 @@ class NewsAnalyzerApp:
             market_data = self.market_data_fetcher.fetch_all_markets()
             logger.info("成功抓取 %d 个市场资产", len(market_data.get("items", [])))
 
-            # 1.65 抓取美国通胀与美联储利率预期相关宏观输入
-            logger.info("步骤 1.65/5: 抓取宏观指标（通胀/利率预期）...")
+            # 1.65 抓取全球流动性、财政债务、通胀与利率预期
+            logger.info("步骤 1.65/5: 抓取宏观指标（债务/M2/通胀/利率）...")
             macro_data = self.macro_fetcher.fetch_all_macro()
             logger.info("成功抓取 %d 个宏观指标", len(macro_data.get("items", [])))
 

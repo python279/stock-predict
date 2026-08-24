@@ -346,7 +346,7 @@ markets:
       market: "CN"
       sector: "consumer"
 
-# 美国通胀与美联储利率预期。官方CPI优先尝试 BLS；失败时保留市场代理并标注数据缺失。
+# 全球流动性与财政数据。CPI、美债和中国M2优先使用官方来源；单源失败不影响日报。
 macro:
   enabled: true
   historical_days: 90
@@ -354,6 +354,12 @@ macro:
   retry_attempts: 2
   retry_delay_seconds: 3
   bls_cpi_enabled: true
+  treasury_debt_enabled: true
+  treasury_debt_url: "https://api.fiscaldata.treasury.gov/services/api/fiscal_service/v2/accounting/od/debt_to_penny"
+  treasury_history_years: 5
+  pboc_m2_enabled: true
+  pboc_m2_index_url: "https://www.pbc.gov.cn/goutongjiaoliu/113456/113469/index.html"
+  pboc_report_limit: 4
   market_proxies:
     - name: "联邦基金期货隐含利率"
       symbol: "ZQ=F"
@@ -407,6 +413,8 @@ analysis:
   prediction_timeframe: "未来1-3个月"  # 预测时间范围
   include_a_share_analysis: true  # 是否包含A股专项分析
   short_term_timeframes: ["未来5个交易日", "未来1-4周"]
+  include_long_term_outlook: true  # 是否生成全球资产与重点赛道长期情景
+  long_term_timeframes: ["未来5年", "未来10年"]
   us_market_focus:
     - "科技/AI/半导体与存储"
     - "重点科技股：英特尔(INTC)、英伟达(NVDA)、特斯拉(TSLA)、AMD、甲骨文(ORCL)"

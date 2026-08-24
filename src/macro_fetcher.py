@@ -1,28 +1,38 @@
-"""宏观指标抓取：美国通胀与美联储利率预期。
+"""宏观指标抓取：通胀、利率、美国联邦债务与中国广义货币。
 
 官方 CPI 优先尝试 BLS 公开接口；失败时降级为可验证的市场代理
 （TIPS ETF、联邦基金期货隐含利率、短端/长端国债收益率），并在输出中
-明确标注“数据缺失/市场代理”，不得伪装成官方打印。
+明确标注“数据缺失/市场代理”。财政与货币规模仅使用美国财政部和
+中国人民银行官方数据，不得用商业数据冒充官方统计。
 """
 
 from __future__ import annotations
 
 import logging
+import re
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
-from urllib.parse import quote
+from urllib.parse import quote, urljoin
 
 import requests
+from bs4 import BeautifulSoup
 
 logger = logging.getLogger(__name__)
 
 
 class MacroFetcher:
-    """抓取通胀与利率政策相关宏观输入。"""
+    """抓取通胀、利率、财政债务与货币供应相关宏观输入。"""
 
     YAHOO_CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart"
     BLS_API_URL = "https://api.bls.gov/publicAPI/v2/timeseries/data/"
+    TREASURY_DEBT_URL = (
+        "https://api.fiscaldata.treasury.gov/services/api/fiscal_service/"
+        "v2/accounting/od/debt_to_penny"
+    )
+    PBOC_REPORT_INDEX_URL = (
+        "https://www.pbc.gov.cn/goutongjiaoliu/113456/113469/index.html"
+    )
 
     def __init__(self, config: Dict[str, Any]):
         self.config = config
@@ -65,6 +75,27 @@ class MacroFetcher:
                 logger.warning("抓取 BLS CPI 失败: %s", exc)
                 result["errors"].append(f"BLS CPI: {exc}")
 
+        if self.macro_config.get("treasury_debt_enabled", True):
+            try:
+                items = self._fetch_treasury_debt()
+                result["items"].extend(items)
+                if not items:
+                    result["errors"].append("U.S. Treasury Debt: 数据缺失/未采集")
+            except Exception as exc:
+                logger.warning("抓取美国财政部债务数据失败: %s", exc)
+                result["errors"].append(f"U.S. Treasury Debt: {exc}")
+
+        if self.macro_config.get("pboc_m2_enabled", True):
+            try:
+                item = self._fetch_pboc_m2()
+                if item:
+                    result["items"].append(item)
+                else:
+                    result["errors"].append("PBOC M2: 数据缺失/未采集")
+            except Exception as exc:
+                logger.warning("抓取中国人民银行 M2 数据失败: %s", exc)
+                result["errors"].append(f"PBOC M2: {exc}")
+
         for asset in self.macro_config.get("market_proxies", []):
             try:
                 item = self._fetch_market_proxy(asset)
@@ -82,6 +113,265 @@ class MacroFetcher:
 
         logger.info("宏观指标抓取完成，共 %d 个序列", len(result["items"]))
         return result
+
+    def _fetch_treasury_debt(self) -> List[Dict[str, Any]]:
+        """抓取美国财政部官方债务规模并计算中长期趋势。"""
+        history_years = max(
+            5, int(self.macro_config.get("treasury_history_years", 5))
+        )
+        page_size = min(max(history_years * 270, 1500), 10000)
+        data = self._request_json(
+            self.macro_config.get("treasury_debt_url", self.TREASURY_DEBT_URL),
+            {
+                "fields": (
+                    "record_date,tot_pub_debt_out_amt,debt_held_public_amt,"
+                    "intragov_hold_amt"
+                ),
+                "sort": "-record_date",
+                "page[size]": page_size,
+            },
+        )
+        rows = [row for row in data.get("data", []) if row.get("record_date")]
+        if not rows:
+            return []
+        rows.sort(key=lambda row: row["record_date"], reverse=True)
+        latest = rows[0]
+        latest_date = datetime.strptime(latest["record_date"], "%Y-%m-%d")
+        one_year_row = self._nearest_historical_row(
+            rows, self._years_before(latest_date, 1)
+        )
+        five_year_row = self._nearest_historical_row(
+            rows, self._years_before(latest_date, 5)
+        )
+
+        series = [
+            (
+                "美国联邦债务总额",
+                "US_TOTAL_PUBLIC_DEBT",
+                "tot_pub_debt_out_amt",
+                "美国财政部每日公布的联邦债务总额",
+            ),
+            (
+                "美国公众持有联邦债务",
+                "US_DEBT_HELD_PUBLIC",
+                "debt_held_public_amt",
+                "由政府外部投资者及美联储等持有的联邦债务",
+            ),
+            (
+                "美国政府内部持有债务",
+                "US_INTRAGOV_DEBT",
+                "intragov_hold_amt",
+                "美国政府信托基金等内部账户持有的联邦债务",
+            ),
+        ]
+        items: List[Dict[str, Any]] = []
+        for name, symbol, field, interpretation in series:
+            latest_value = self._to_float(latest.get(field))
+            if latest_value is None:
+                continue
+            one_year_value = self._to_float((one_year_row or {}).get(field))
+            five_year_value = self._to_float((five_year_row or {}).get(field))
+            items.append(
+                {
+                    "name": name,
+                    "symbol": symbol,
+                    "category": "fiscal_debt",
+                    "unit": "万亿美元",
+                    "source": "U.S. Treasury Fiscal Data",
+                    "source_url": self.macro_config.get(
+                        "treasury_debt_url", self.TREASURY_DEBT_URL
+                    ),
+                    "value": round(latest_value / 1_000_000_000_000, 3),
+                    "raw_value_usd": latest_value,
+                    "value_date": latest["record_date"],
+                    "change_1y_pct": self._growth_pct(latest_value, one_year_value),
+                    "cagr_5y_pct": self._cagr_pct(
+                        latest_value, five_year_value, 5
+                    ),
+                    "interpretation": f"{interpretation}；官方日度数据，非GDP占比",
+                    "is_official": True,
+                    "is_proxy": False,
+                }
+            )
+        return items
+
+    def _fetch_pboc_m2(self) -> Optional[Dict[str, Any]]:
+        """从人民银行金融统计报告抓取 M2 余额与同比趋势。"""
+        report_limit = max(
+            2, min(int(self.macro_config.get("pboc_report_limit", 4)), 12)
+        )
+        configured_urls = self.macro_config.get("pboc_m2_report_urls", [])
+        report_urls = [
+            {"url": url, "title": ""} for url in configured_urls if url
+        ]
+        if not report_urls:
+            report_urls = self._discover_pboc_report_urls(report_limit)
+        if not report_urls:
+            return None
+
+        observations: List[Dict[str, Any]] = []
+        for report in report_urls[:report_limit]:
+            try:
+                html = self._request_text(report["url"])
+                parsed = self._parse_pboc_m2_report(
+                    html, report.get("title", ""), report["url"]
+                )
+                if parsed:
+                    observations.append(parsed)
+            except Exception as exc:
+                logger.warning("解析人民银行 M2 报告失败 %s: %s", report["url"], exc)
+        if not observations:
+            return None
+
+        observations.sort(key=lambda item: item["value_date"], reverse=True)
+        latest = observations[0]
+        previous = observations[1] if len(observations) > 1 else None
+        yoy_change = None
+        if previous and latest.get("yoy_pct") is not None:
+            previous_yoy = previous.get("yoy_pct")
+            if previous_yoy is not None:
+                yoy_change = round(latest["yoy_pct"] - previous_yoy, 2)
+        return {
+            "name": "中国广义货币M2余额",
+            "symbol": "CN_M2",
+            "category": "money_supply",
+            "unit": "万亿元人民币",
+            "source": "中国人民银行",
+            "source_url": latest["source_url"],
+            "value": latest["balance_trillion_cny"],
+            "raw_value_trillion_cny": latest["balance_trillion_cny"],
+            "value_date": latest["value_date"],
+            "yoy_pct": latest.get("yoy_pct"),
+            "change_1m_pct_pts": yoy_change,
+            "history": observations,
+            "interpretation": (
+                "人民银行官方金融统计报告；同比增速反映货币扩张速度，"
+                "不等同于信用已流入实体经济或资产市场"
+            ),
+            "is_official": True,
+            "is_proxy": False,
+        }
+
+    def _discover_pboc_report_urls(self, limit: int) -> List[Dict[str, str]]:
+        index_url = self.macro_config.get(
+            "pboc_m2_index_url", self.PBOC_REPORT_INDEX_URL
+        )
+        html = self._request_text(index_url)
+        soup = BeautifulSoup(html, "html.parser")
+        reports: List[Dict[str, str]] = []
+        seen = set()
+        for anchor in soup.find_all("a", href=True):
+            title = " ".join(anchor.get_text(" ", strip=True).split())
+            if "金融统计数据报告" not in title:
+                continue
+            url = urljoin(index_url, anchor["href"])
+            if url in seen:
+                continue
+            seen.add(url)
+            reports.append({"url": url, "title": title})
+        reports.sort(
+            key=lambda report: self._extract_chinese_year_month(report["title"])
+            or "",
+            reverse=True,
+        )
+        return reports[:limit]
+
+    @classmethod
+    def _parse_pboc_m2_report(
+        cls, html: str, title: str, source_url: str
+    ) -> Optional[Dict[str, Any]]:
+        text = " ".join(BeautifulSoup(html, "html.parser").get_text(" ", strip=True).split())
+        normalized = (
+            text.replace("（", "(")
+            .replace("）", ")")
+            .replace("，", ",")
+            .replace("％", "%")
+        )
+        pattern = re.compile(
+            r"广义货币\s*\(\s*M2\s*\)\s*余额(?:为)?\s*"
+            r"([\d,.]+)\s*万亿元.{0,120}?同比(?:增长|下降)\s*"
+            r"([+-]?\d+(?:\.\d+)?)\s*%",
+            re.IGNORECASE,
+        )
+        match = pattern.search(normalized)
+        if not match:
+            return None
+        date_value = cls._extract_chinese_year_month(title or normalized[:300])
+        if not date_value:
+            date_value = cls._extract_chinese_year_month(normalized)
+        if not date_value:
+            return None
+        balance = cls._to_float(match.group(1).replace(",", ""))
+        yoy = cls._to_float(match.group(2))
+        if balance is None or yoy is None:
+            return None
+        yoy_context = match.group(0)
+        if "同比下降" in yoy_context and yoy > 0:
+            yoy = -yoy
+        return {
+            "value_date": date_value,
+            "balance_trillion_cny": round(balance, 3),
+            "yoy_pct": round(yoy, 2),
+            "source_url": source_url,
+        }
+
+    @staticmethod
+    def _extract_chinese_year_month(text: str) -> Optional[str]:
+        match = re.search(r"(20\d{2})年\s*(\d{1,2})月", text or "")
+        if not match:
+            return None
+        return f"{match.group(1)}-{int(match.group(2)):02d}"
+
+    @staticmethod
+    def _years_before(value: datetime, years: int) -> datetime:
+        try:
+            return value.replace(year=value.year - years)
+        except ValueError:
+            return value.replace(year=value.year - years, day=28)
+
+    @staticmethod
+    def _nearest_historical_row(
+        rows: List[Dict[str, Any]], target: datetime
+    ) -> Optional[Dict[str, Any]]:
+        dated_rows = []
+        for row in rows:
+            try:
+                dated_rows.append(
+                    (datetime.strptime(row["record_date"], "%Y-%m-%d"), row)
+                )
+            except (KeyError, TypeError, ValueError):
+                continue
+        if not dated_rows:
+            return None
+        nearest_date, nearest_row = min(
+            dated_rows, key=lambda pair: abs((pair[0] - target).days)
+        )
+        if abs((nearest_date - target).days) > 45:
+            return None
+        return nearest_row
+
+    @staticmethod
+    def _to_float(value: Any) -> Optional[float]:
+        try:
+            if value in {None, "", "-"}:
+                return None
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _growth_pct(latest: float, previous: Optional[float]) -> Optional[float]:
+        if previous in {None, 0}:
+            return None
+        return round((latest / previous - 1) * 100, 2)
+
+    @staticmethod
+    def _cagr_pct(
+        latest: float, previous: Optional[float], years: int
+    ) -> Optional[float]:
+        if previous in {None, 0} or latest <= 0 or years <= 0:
+            return None
+        return round(((latest / previous) ** (1 / years) - 1) * 100, 2)
 
     def _fetch_bls_cpi(self) -> List[Dict[str, Any]]:
         """抓取 BLS 官方 CPI；网络或 SSL 失败时返回空列表。"""
@@ -260,6 +550,8 @@ class MacroFetcher:
         for attempt in range(self.retry_attempts):
             try:
                 response = self.session.get(url, params=params, timeout=self.timeout)
+                if response.status_code == 429:
+                    raise RuntimeError("HTTP 429，本轮停止该宏观数据源请求")
                 response.raise_for_status()
                 return response.json()
             except (requests.RequestException, ValueError) as exc:
@@ -267,6 +559,22 @@ class MacroFetcher:
                     raise RuntimeError(f"请求失败: {exc}") from exc
                 time.sleep(self.retry_delay)
         return {}
+
+    def _request_text(self, url: str) -> str:
+        for attempt in range(self.retry_attempts):
+            try:
+                response = self.session.get(url, timeout=self.timeout)
+                if response.status_code == 429:
+                    raise RuntimeError("HTTP 429，本轮停止该宏观数据源请求")
+                response.raise_for_status()
+                if not response.encoding or response.encoding.lower() == "iso-8859-1":
+                    response.encoding = response.apparent_encoding
+                return response.text
+            except requests.RequestException as exc:
+                if attempt == self.retry_attempts - 1:
+                    raise RuntimeError(f"页面请求失败: {exc}") from exc
+                time.sleep(self.retry_delay)
+        return ""
 
     @staticmethod
     def _value_at(values: List[Any], index: int) -> Optional[float]:

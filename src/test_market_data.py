@@ -123,6 +123,12 @@ class MarketDataFetcherTest(unittest.TestCase):
             self.assertIn("TIP", {
                 item["symbol"] for item in config["macro"]["market_proxies"]
             })
+            self.assertTrue(config["macro"]["treasury_debt_enabled"])
+            self.assertTrue(config["macro"]["pboc_m2_enabled"])
+            self.assertEqual(
+                config["analysis"]["long_term_timeframes"],
+                ["未来5年", "未来10年"],
+            )
 
 
 class MacroFetcherTest(unittest.TestCase):
@@ -134,6 +140,8 @@ class MacroFetcherTest(unittest.TestCase):
                 "macro": {
                     "enabled": True,
                     "bls_cpi_enabled": False,
+                    "treasury_debt_enabled": False,
+                    "pboc_m2_enabled": False,
                     "historical_days": 30,
                     "retry_attempts": 1,
                     "market_proxies": [
@@ -175,6 +183,8 @@ class MacroFetcherTest(unittest.TestCase):
                 "macro": {
                     "enabled": True,
                     "bls_cpi_enabled": True,
+                    "treasury_debt_enabled": False,
+                    "pboc_m2_enabled": False,
                     "retry_attempts": 1,
                     "market_proxies": [
                         {
@@ -201,6 +211,121 @@ class MacroFetcherTest(unittest.TestCase):
         self.assertEqual(len(result["items"]), 1)
         self.assertEqual(result["items"][0]["symbol"], "TIP")
         self.assertTrue(any("BLS CPI" in error for error in result["errors"]))
+
+    def test_treasury_debt_scale_and_trends_are_calculated(self):
+        from macro_fetcher import MacroFetcher
+
+        fetcher = MacroFetcher(
+            {
+                "macro": {
+                    "enabled": True,
+                    "bls_cpi_enabled": False,
+                    "treasury_debt_enabled": True,
+                    "pboc_m2_enabled": False,
+                    "treasury_history_years": 5,
+                    "market_proxies": [],
+                }
+            }
+        )
+        fetcher._request_json = Mock(
+            return_value={
+                "data": [
+                    {
+                        "record_date": "2026-08-12",
+                        "tot_pub_debt_out_amt": "40000000000000",
+                        "debt_held_public_amt": "32000000000000",
+                        "intragov_hold_amt": "8000000000000",
+                    },
+                    {
+                        "record_date": "2025-08-12",
+                        "tot_pub_debt_out_amt": "38000000000000",
+                        "debt_held_public_amt": "30000000000000",
+                        "intragov_hold_amt": "8000000000000",
+                    },
+                    {
+                        "record_date": "2021-08-12",
+                        "tot_pub_debt_out_amt": "28000000000000",
+                        "debt_held_public_amt": "22000000000000",
+                        "intragov_hold_amt": "6000000000000",
+                    },
+                ]
+            }
+        )
+
+        result = fetcher.fetch_all_macro()
+
+        self.assertEqual(len(result["items"]), 3)
+        total_debt = result["items"][0]
+        self.assertEqual(total_debt["value"], 40.0)
+        self.assertEqual(total_debt["value_date"], "2026-08-12")
+        self.assertEqual(total_debt["change_1y_pct"], 5.26)
+        self.assertEqual(total_debt["cagr_5y_pct"], 7.39)
+        self.assertEqual(total_debt["source"], "U.S. Treasury Fiscal Data")
+        self.assertTrue(total_debt["is_official"])
+
+    def test_pboc_m2_reports_produce_balance_and_yoy_trend(self):
+        from macro_fetcher import MacroFetcher
+
+        fetcher = MacroFetcher(
+            {
+                "macro": {
+                    "enabled": True,
+                    "bls_cpi_enabled": False,
+                    "treasury_debt_enabled": False,
+                    "pboc_m2_enabled": True,
+                    "pboc_report_limit": 2,
+                    "market_proxies": [],
+                }
+            }
+        )
+        fetcher._discover_pboc_report_urls = Mock(
+            return_value=[
+                {"url": "https://www.pbc.gov.cn/current.html", "title": "2026年7月金融统计数据报告"},
+                {"url": "https://www.pbc.gov.cn/previous.html", "title": "2026年6月金融统计数据报告"},
+            ]
+        )
+        fetcher._request_text = Mock(
+            side_effect=[
+                "<p>7月末，广义货币（M2）余额329.94万亿元，同比增长8.1%。</p>",
+                "<p>6月末，广义货币(M2)余额328.15万亿元，同比增长8.3%。</p>",
+            ]
+        )
+
+        result = fetcher.fetch_all_macro()
+
+        self.assertEqual(len(result["items"]), 1)
+        m2 = result["items"][0]
+        self.assertEqual(m2["value"], 329.94)
+        self.assertEqual(m2["value_date"], "2026-07")
+        self.assertEqual(m2["yoy_pct"], 8.1)
+        self.assertEqual(m2["change_1m_pct_pts"], -0.2)
+        self.assertEqual(m2["source"], "中国人民银行")
+        self.assertTrue(m2["is_official"])
+
+    def test_official_macro_failures_do_not_stop_other_sources(self):
+        from macro_fetcher import MacroFetcher
+
+        fetcher = MacroFetcher(
+            {
+                "macro": {
+                    "enabled": True,
+                    "bls_cpi_enabled": False,
+                    "treasury_debt_enabled": True,
+                    "pboc_m2_enabled": True,
+                    "market_proxies": [],
+                }
+            }
+        )
+        fetcher._fetch_treasury_debt = Mock(
+            side_effect=RuntimeError("Treasury unavailable")
+        )
+        fetcher._fetch_pboc_m2 = Mock(side_effect=RuntimeError("PBOC unavailable"))
+
+        result = fetcher.fetch_all_macro()
+
+        self.assertEqual(result["items"], [])
+        self.assertTrue(any("U.S. Treasury Debt" in error for error in result["errors"]))
+        self.assertTrue(any("PBOC M2" in error for error in result["errors"]))
 
 
 class IndustryTagAndSentimentTest(unittest.TestCase):
@@ -405,6 +530,10 @@ class MobileReportStorageTest(unittest.TestCase):
                         "| --- | --- |\n"
                         "| 加息预期 | - **科技** (估值承压)；<br>- **消费** (信贷承压) |\n\n"
                         "** 香港市场：**\n\n"
+                        "#### 7.3 未来5年、未来10年结构性资产情景\n\n"
+                        "| 排名与候选 | 基准情景名义/实际CAGR | 乐观/悲观CAGR | 核心驱动 | 主要风险与失效条件 |\n"
+                        "| --- | --- | --- | --- | --- |\n"
+                        "| 1. 电力电网 | 8%-12% / 5%-9% | 15%-20% / -5%-0% | AI用电增长 | 资本开支下调 |\n\n"
                         "本报告仅为基于公开信息的情景分析，不构成投资建议。\n\n"
                         "### 参考资料\n\n"
                         "1. **不应出现在移动版的新闻**"
@@ -434,6 +563,9 @@ class MobileReportStorageTest(unittest.TestCase):
                 content,
             )
             self.assertIn("**香港市场：**", content)
+            self.assertIn("#### 7.3 未来5年、未来10年结构性资产情景", content)
+            self.assertIn("##### 排名与候选：1. 电力电网", content)
+            self.assertIn("- **核心驱动：** AI用电增长", content)
             self.assertNotIn("**行业：**科技**", content)
             self.assertNotIn("*   ", content)
             self.assertNotIn("<br", content)
@@ -450,8 +582,15 @@ class MobileReportStorageTest(unittest.TestCase):
                 desktop_content,
             )
             self.assertIn("**香港市场：**", desktop_content)
+            self.assertIn(
+                "| 1）电力电网 | 8%-12% / 5%-9% | 15%-20% / -5%-0% |",
+                desktop_content,
+            )
             self.assertNotIn("<br", desktop_content)
             self.assertNotIn("** 香港市场", desktop_content)
+            email_html = EmailSender({})._markdown_to_html(desktop_content)
+            self.assertIn("<table>", email_html)
+            self.assertIn("未来5年、未来10年结构性资产情景", email_html)
 
 
 class IndustryReportPromptTest(unittest.TestCase):
@@ -462,6 +601,8 @@ class IndustryReportPromptTest(unittest.TestCase):
             "include_predictions": True,
             "include_a_share_analysis": True,
             "short_term_timeframes": ["未来5个交易日", "未来1-4周"],
+            "include_long_term_outlook": True,
+            "long_term_timeframes": ["未来5年", "未来10年"],
             "us_market_focus": ["科技/AI/半导体与存储"],
         }
 
@@ -476,8 +617,30 @@ class IndustryReportPromptTest(unittest.TestCase):
         self.assertIn("已提供的美国科技公司个股行情", prompt)
         self.assertIn("相对 QQQ/SMH 强弱", prompt)
         self.assertIn("SpaceX 等未上市公司的新闻", prompt)
-        self.assertIn("美国通胀与美联储利率预期", prompt)
+        self.assertIn("全球流动性、财政债务与利率数据", prompt)
+        self.assertIn("美国联邦债务", prompt)
+        self.assertIn("中国M2", prompt)
         self.assertIn("韩国科技股", prompt)
+        self.assertIn("7.3 未来5年、未来10年结构性资产情景", prompt)
+        self.assertIn("基准情景名义/实际CAGR", prompt)
+        self.assertIn("不得称为“必然疯涨”", prompt)
+        self.assertIn("主要风险与失效条件", prompt)
+        self.assertEqual(
+            [line for line in prompt.splitlines() if line.startswith("### ")],
+            [
+                "### 1. 今日决策摘要",
+                "### 2. 关键风险与黑天鹅监测",
+                "### 3. 宏观与跨资产传导",
+                "### 4. A股：行业趋势与科技急跌预警",
+                "### 5. 美股：行业与风险偏好",
+                "### 6. 港股与日股：联动观察",
+                "### 7. 未来路径与执行清单",
+            ],
+        )
+
+        user_prompt = analyzer._build_user_prompt("测试数据")
+        self.assertNotIn("大宗商品章节必须", user_prompt)
+        self.assertIn("未来5年/10年的三情景CAGR", user_prompt)
 
     def test_report_icons_are_removed_without_affecting_markdown(self):
         cleaned = LLMAnalyzer._strip_report_icons(
