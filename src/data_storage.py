@@ -85,8 +85,9 @@ class DataStorage:
         self,
         market_data: Dict[str, Any],
         sentiment_data: Dict[str, Any],
+        disclosure_data: Optional[Dict[str, Any]] = None,
     ) -> str:
-        """保存本次市场、政策/新闻情绪快照，供审计和后续扩展使用。"""
+        """保存市场、舆情及官方财务披露快照，供审计和后续扩展使用。"""
         try:
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             filepath = os.path.join(self.market_cache_dir, f"market_{timestamp}.json")
@@ -96,6 +97,7 @@ class DataStorage:
                         'timestamp': datetime.now().isoformat(),
                         'market_data': market_data,
                         'sentiment_data': sentiment_data,
+                        'disclosure_data': disclosure_data or {},
                     },
                     file,
                     ensure_ascii=False,
@@ -235,7 +237,9 @@ class DataStorage:
                 f"> 数据概览：新闻 {analysis_result.get('articles_count', 0)} 篇；"
                 f"大宗商品 {analysis_result.get('commodities_count', 0)} 项；"
                 f"市场行情 {analysis_result.get('market_items_count', 0)} 项；"
-                f"宏观指标 {analysis_result.get('macro_items_count', 0)} 项\n\n"
+                f"宏观指标 {analysis_result.get('macro_items_count', 0)} 项；"
+                f"OGE披露 {analysis_result.get('disclosure_filings_count', 0)} 份；"
+                f"已解析交易 {analysis_result.get('disclosure_transactions_count', 0)} 笔\n\n"
             )
             file.write(mobile_analysis.strip())
             file.write("\n")

@@ -88,6 +88,7 @@ class LLMAnalyzer:
         market_data: Dict[str, Any] = None,
         sentiment_data: Dict[str, Any] = None,
         macro_data: Dict[str, Any] = None,
+        disclosure_data: Dict[str, Any] = None,
     ) -> Dict[str, Any]:
         """
         分析新闻文章
@@ -100,6 +101,7 @@ class LLMAnalyzer:
             market_data: 美股/A股指数及行业趋势数据
             sentiment_data: 按行业聚合的新闻/舆情摘要
             macro_data: 财政债务、货币供应、通胀与利率预期相关宏观输入
+            disclosure_data: 特朗普 OGE 官方交易与年度持仓披露
 
         Returns:
             分析结果字典
@@ -117,6 +119,7 @@ class LLMAnalyzer:
                 market_data or {},
                 sentiment_data or {},
                 macro_data or {},
+                disclosure_data or {},
             )
 
             # 构建 system / user 两段提示词
@@ -134,6 +137,11 @@ class LLMAnalyzer:
             commodity_items = (commodity_data or {}).get('items', [])
             market_items = (market_data or {}).get('items', [])
             macro_items = (macro_data or {}).get('items', [])
+            disclosure_filings = (disclosure_data or {}).get('filings', [])
+            disclosure_transactions = (disclosure_data or {}).get(
+                'transactions', []
+            )
+            disclosure_holdings = (disclosure_data or {}).get('holdings', [])
 
             result = {
                 'analysis_time': datetime.now().isoformat(),
@@ -146,6 +154,10 @@ class LLMAnalyzer:
                 'market_data': market_data or {},
                 'macro_items_count': len(macro_items),
                 'macro_data': macro_data or {},
+                'disclosure_filings_count': len(disclosure_filings),
+                'disclosure_transactions_count': len(disclosure_transactions),
+                'disclosure_holdings_count': len(disclosure_holdings),
+                'disclosure_data': disclosure_data or {},
                 'sentiment_data': sentiment_data or {},
                 'regions_covered': self._get_regions(articles),
                 'analysis': analysis_text,
@@ -171,6 +183,7 @@ class LLMAnalyzer:
         market_data: Dict[str, Any] = None,
         sentiment_data: Dict[str, Any] = None,
         macro_data: Dict[str, Any] = None,
+        disclosure_data: Dict[str, Any] = None,
     ) -> str:
         """
         准备新闻摘要，包含今日新闻和历史新闻，每条均标注日期
@@ -182,6 +195,7 @@ class LLMAnalyzer:
             market_data: 美股/A股指数及行业趋势数据
             sentiment_data: 按行业聚合的新闻/舆情摘要
             macro_data: 财政债务、货币供应、通胀与利率预期相关宏观输入
+            disclosure_data: 特朗普 OGE 官方交易与年度持仓披露
 
         Returns:
             带日期标注的完整新闻摘要文本
@@ -347,6 +361,164 @@ class LLMAnalyzer:
                     + "；".join(macro_data.get('errors', [])[:5])
                 )
 
+        # ── 特朗普 OGE 官方交易与年度持仓披露 ──────────────────────
+        if disclosure_data and any(
+            disclosure_data.get(key)
+            for key in (
+                'filings',
+                'transactions',
+                'holdings',
+                'background_news',
+                'errors',
+            )
+        ):
+            oge_config = getattr(self, 'config', {}).get('oge_disclosure', {})
+            max_transactions = int(
+                oge_config.get('max_prompt_transactions', 25)
+            )
+            max_holdings = int(oge_config.get('max_prompt_holdings', 15))
+            transactions = sorted(
+                disclosure_data.get('transactions', []),
+                key=lambda item: (
+                    item.get('amount_max_usd') or 0,
+                    item.get('transaction_date') or '',
+                ),
+                reverse=True,
+            )
+            holdings = sorted(
+                disclosure_data.get('holdings', []),
+                key=lambda item: item.get('value_max_usd') or 0,
+                reverse=True,
+            )
+            transaction_dates = sorted(
+                item.get('transaction_date')
+                for item in transactions
+                if item.get('transaction_date')
+            )
+            purchase_count = sum(
+                item.get('transaction_type') == 'Purchase'
+                for item in transactions
+            )
+            sale_count = sum(
+                item.get('transaction_type') == 'Sale'
+                for item in transactions
+            )
+            summary_parts.append(
+                "\n\n# 【特朗普 OGE 官方财务披露】"
+                "\n> 一级证据仅为美国政府道德办公室 OGE 官方 278-T/278e。"
+                "278-T只披露超过1,000美元且不属于豁免范围的已报告交易，"
+                "存在30/45天申报窗口，金额为区间，并非实时或完整持仓。"
+                "年度278e仅作为法定阈值和豁免后的持仓基线。"
+                "标有 DISCRETIONARY ORDER 的交易不得表述为特朗普本人下令；"
+                "无新报告也不代表没有交易。可信媒体仅作背景，不得补造官方字段。"
+            )
+            summary_parts.append(
+                "\n披露数据截至：{date}；文件 {filings} 份；已解析交易 {transactions} 笔；"
+                "年度持仓基线 {holdings} 项；缓存回退：{stale}。".format(
+                    date=disclosure_data.get('data_as_of') or '未知',
+                    filings=len(disclosure_data.get('filings', [])),
+                    transactions=len(transactions),
+                    holdings=len(holdings),
+                    stale='是' if disclosure_data.get('stale_cache') else '否',
+                )
+            )
+            summary_parts.append(
+                "\n有效交易日期范围：{start} 至 {end}；按笔数统计：买入 {purchases} 笔、"
+                "卖出 {sales} 笔。笔数不等于净金额，不得据此推断净增减仓。".format(
+                    start=transaction_dates[0] if transaction_dates else '未知',
+                    end=transaction_dates[-1] if transaction_dates else '未知',
+                    purchases=purchase_count,
+                    sales=sale_count,
+                )
+            )
+            if disclosure_data.get('filings'):
+                summary_parts.append(
+                    "\n| 表单 | OGE收件日期 | 报告年度 | 解析状态 | OCR页数 | 解析说明 | 官方来源 |"
+                )
+                summary_parts.append("| --- | --- | --- | --- | --- | --- | --- |")
+                for filing in disclosure_data.get('filings', [])[:8]:
+                    summary_parts.append(
+                        "| {form} | {date} | {year} | {status} | {ocr_pages} | "
+                        "{note} | {source} |".format(
+                            form=self._prompt_cell(filing.get('form_type')),
+                            date=self._prompt_cell(filing.get('received_date')),
+                            year=self._prompt_cell(filing.get('report_year')),
+                            status=self._prompt_cell(filing.get('parse_status')),
+                            ocr_pages=self._prompt_cell(
+                                filing.get('ocr_pages', 0)
+                            ),
+                            note=self._prompt_cell(
+                                filing.get('parse_note'), 80
+                            ),
+                            source=self._prompt_cell(filing.get('source_url')),
+                        )
+                    )
+            if transactions:
+                summary_parts.append(
+                    "\n| 交易日期 | 资产 | 方向 | 金额区间 | 迟报 | 第三方裁量 | OGE来源 |"
+                )
+                summary_parts.append(
+                    "| --- | --- | --- | --- | --- | --- | --- |"
+                )
+                for item in transactions[:max_transactions]:
+                    summary_parts.append(
+                        "| {date} | {asset} | {direction} | {amount} | {late} | "
+                        "{discretionary} | {source} |".format(
+                            date=self._prompt_cell(item.get('transaction_date')),
+                            asset=self._prompt_cell(
+                                item.get('asset_description'), 100
+                            ),
+                            direction=self._prompt_cell(
+                                item.get('transaction_type')
+                            ),
+                            amount=self._prompt_cell(item.get('amount_range')),
+                            late='是' if item.get('late_filing') else '否',
+                            discretionary=(
+                                '是' if item.get('discretionary_order') else '否/未识别'
+                            ),
+                            source=self._prompt_cell(item.get('source')),
+                        )
+                    )
+            if holdings:
+                summary_parts.append(
+                    "\n| 年度持仓基线资产 | 类型 | 披露价值区间 | 报告期 | 解析置信度 | OGE来源 |"
+                )
+                summary_parts.append("| --- | --- | --- | --- | --- | --- |")
+                for item in holdings[:max_holdings]:
+                    summary_parts.append(
+                        "| {asset} | {asset_type} | {value} | {date} | {confidence} | "
+                        "{source} |".format(
+                            asset=self._prompt_cell(
+                                item.get('asset_description'), 100
+                            ),
+                            asset_type=self._prompt_cell(item.get('asset_type')),
+                            value=self._prompt_cell(item.get('value_range')),
+                            date=self._prompt_cell(item.get('as_of_date')),
+                            confidence=self._prompt_cell(
+                                item.get('parse_confidence')
+                            ),
+                            source=self._prompt_cell(item.get('source')),
+                        )
+                    )
+            if disclosure_data.get('background_news'):
+                summary_parts.append(
+                    "\n【可信媒体背景，仅辅助解释，不是交易/持仓证据】"
+                )
+                for item in disclosure_data.get('background_news', [])[:6]:
+                    summary_parts.append(
+                        "- {date} | {source} | {title} | {url}".format(
+                            date=self._prompt_cell(item.get('published_at'), 25),
+                            source=self._prompt_cell(item.get('source')),
+                            title=self._prompt_cell(item.get('title'), 140),
+                            url=self._prompt_cell(item.get('url'), 200),
+                        )
+                    )
+            if disclosure_data.get('errors'):
+                summary_parts.append(
+                    "\n> OGE 披露抓取或解析提示："
+                    + "；".join(disclosure_data.get('errors', [])[:5])
+                )
+
         # ── 美股/A股市场、行业与重点个股行情 ───────────────────────
         if market_data and market_data.get('items'):
             summary_parts.append(
@@ -452,6 +624,12 @@ class LLMAnalyzer:
         if item.get("change_1y_pct") is not None:
             return f"{float(item['change_1y_pct']):+.2f}%"
         return "N/A"
+
+    @staticmethod
+    def _prompt_cell(value: Any, limit: int = 80) -> str:
+        """清理注入 prompt 表格的外部文本，避免破坏 Markdown 结构。"""
+        text = " ".join(str(value if value is not None else "").split())
+        return text.replace("|", "；")[:limit] or "N/A"
 
     @staticmethod
     def _format_pct(value: Any) -> str:
@@ -935,6 +1113,7 @@ class LLMAnalyzer:
 
 ## 证据与风险原则
 - 只使用输入中可核查的事实和数据；市场数据必须注明数据日期，缺失时明确说明。
+- OGE 278-T/278e 是特朗普交易与持仓结论的唯一一级证据；媒体报道仅作背景。禁止把金额区间改写成精确金额、把已报告交易写成完整/实时持仓，或把第三方裁量交易写成特朗普本人下令。
 - 黑天鹅只能做情景预警，不能声称可以确定预测；区分“已发生事实”“预警信号”“推演”。
 - 不承诺收益，不虚构估值、资金流、政策或历史类比；杠杆、期权和期货仅作高风险工具提示。
 - 同一新闻/事件只在最相关章节完整解释一次，其他章节仅交叉引用章节编号，禁止重复复述。
@@ -961,8 +1140,14 @@ class LLMAnalyzer:
 
 #### 2.1 美国政治热点与全球传导
 - 若提供【美国政治热点】输入，优先分析选举、白宫/国会政策、制裁、军费、能源外交与中东局势如何**可能**经政策预期、财政/关税、能源供给、避险情绪传导至经济和市场。
+- 若提供【特朗普 OGE 官方财务披露】，在同一张表中优先加入最多 1 行高重要性披露事实；只有同时存在政策时间线和独立证据时才讨论潜在利益冲突，并明确“相关性不等于因果”。`DISCRETIONARY ORDER` 表示第三方拥有交易裁量，不得归因于特朗普本人决策。
 - 用不超过 3 行的表格：`政治事件/事实 | 可验证传导机制 | 受影响资产/行业 | 待验证信号 | 风险应对`。
 - 美国大选、党派立场或中东战争之间若无直接证据，只能写“相关性/共同驱动假设”，不得宣称选举“导致”战争或特定市场走势；必须列出可证伪条件。
+
+#### 2.2 特朗普 OGE 官方交易与持仓披露
+- 本子节必须始终输出。若提供【特朗普 OGE 官方财务披露】，用不超过 5 条列表依次写明：数据截至日期和最新表单；最近180天金额区间最大的代表性买入/卖出；交易方向或行业变化；最新年度278e中金额区间最大的代表性证券/基金持仓；解析失败、扫描页或缓存回退情况。
+- 每条交易必须包含交易日期、资产名称、方向、披露金额区间及是否为第三方裁量；持仓必须注明“年度披露持仓基线”和报告年度。只选择官方输入中存在的记录，不得根据媒体报道补全。
+- 若本轮只有文件元数据而无可靠交易行，明确写“OGE文件已发现，但交易明细未可靠解析”；无年度持仓时写“年度持仓数据缺失/未采集”。禁止用“特朗普最新完整持仓”“实时交易”或“本人下令”等措辞。
 
 ### 3. 宏观与跨资产传导
 将全球增长、央行、贸易、能源/贵金属/工业金属/农产品、美国通胀与利率预期、美国联邦债务和中国M2合并分析。
@@ -978,6 +1163,7 @@ class LLMAnalyzer:
 ### 5. 美股：行业与风险偏好
 - 使用 SPY/QQQ、行业 ETF、VIX、已提供的美国科技公司个股行情、通胀/利率预期和新闻数据，重点覆盖：{us_market_focus}。
 - 对重点科技股比较 1日/5日/20日涨跌、20日回撤、波动率及相对 QQQ/SMH 强弱；不得把 SpaceX 等未上市公司的新闻当作股票价格数据。
+- OGE披露资产只有与已采集行情或行业证据重合时才能用于传导分析；交易披露不是跟单信号，不得据此推断当前剩余仓位、成本、盈亏或政策将利好该资产。
 - 用一张表：`行业 | 当前状态 | {short_term}情景 | 催化/风险 | 关注工具`。
 - 不重复第 2 章黑天鹅描述，只说明美股的直接传导和失效条件。
 
@@ -991,6 +1177,7 @@ class LLMAnalyzer:
 
 #### 7.2 本周执行与观察
 - 给出不超过 5 条按优先级排序的动作/观察项，覆盖仓位、对冲、事件日历和风险警戒线。
+- 若本轮存在新的 278-T，加入一条后续 OGE 披露观察项；说明交易后最迟45天申报，且公开仍有延迟。无新报告不得解释为无交易。
 {long_term_section}
 
 - 第 7 章最后一行固定写免责声明：`本报告仅为基于公开信息的情景分析，不构成投资建议。`
@@ -1027,7 +1214,7 @@ class LLMAnalyzer:
 
 ---
 
-请严格按照报告结构逐章输出分析，不要省略任何章节。**全程使用 Markdown 格式**，表格用 `| 列 |` 语法，重点用 `**粗体**`，列表前后留空行。第3章应整合大宗商品、财政、货币与利率的跨资产传导，第4至6章给出相关投资工具和风控条件。{long_term_instruction}市场和行业章节必须标注所引用数据的日期、缺失项与失效条件。"""
+请严格按照报告结构逐章输出分析，不要省略任何章节或固定子节。**全程使用 Markdown 格式**，表格用 `| 列 |` 语法，重点用 `**粗体**`，列表前后留空行。第2.2节必须展示特朗普OGE官方交易与年度持仓基线；即使明细未可靠解析，也必须说明文件状态和缺失原因。第3章应整合大宗商品、财政、货币与利率的跨资产传导，第4至6章给出相关投资工具和风控条件。若提供【特朗普 OGE 官方财务披露】，第2.1、第2.2和第5章只能以OGE字段认定交易/持仓，可信媒体仅辅助解释，不得补造ticker、金额或本人决策。{long_term_instruction}市场和行业章节必须标注所引用数据的日期、缺失项与失效条件。"""
     
     def _call_llm(self, system_prompt: str, user_prompt: str) -> str:
         """
@@ -1089,6 +1276,10 @@ class LLMAnalyzer:
         return {
             'analysis_time': datetime.now().isoformat(),
             'articles_count': 0,
+            'disclosure_filings_count': 0,
+            'disclosure_transactions_count': 0,
+            'disclosure_holdings_count': 0,
+            'disclosure_data': {},
             'regions_covered': [],
             'analysis': '暂无分析结果',
             'raw_articles': []

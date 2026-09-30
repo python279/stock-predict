@@ -15,6 +15,7 @@ from news_fetcher import NewsFetcher
 from commodity_fetcher import CommodityFetcher
 from market_data_fetcher import MarketDataFetcher
 from macro_fetcher import MacroFetcher
+from oge_disclosure_fetcher import OgeDisclosureFetcher
 from sentiment_fetcher import SentimentFetcher
 from llm_analyzer import LLMAnalyzer
 from email_sender import EmailSender
@@ -53,6 +54,7 @@ class NewsAnalyzerApp:
             self.commodity_fetcher = CommodityFetcher(self.config)
             self.market_data_fetcher = MarketDataFetcher(self.config)
             self.macro_fetcher = MacroFetcher(self.config)
+            self.oge_disclosure_fetcher = OgeDisclosureFetcher(self.config)
             self.sentiment_fetcher = SentimentFetcher(self.config)
             self.analyzer = LLMAnalyzer(self.config)
             self.email_sender = EmailSender(self.config)
@@ -108,10 +110,24 @@ class NewsAnalyzerApp:
             logger.info("步骤 1.7/5: 汇总行业舆情...")
             sentiment_data = self.sentiment_fetcher.fetch(articles, market_data)
 
+            # 1.75 抓取特朗普 OGE 官方交易与年度持仓披露
+            logger.info("步骤 1.75/5: 抓取特朗普 OGE 官方财务披露...")
+            disclosure_data = (
+                self.oge_disclosure_fetcher.fetch_all_disclosures(articles)
+            )
+            logger.info(
+                "成功读取 OGE 披露文件 %d 份、交易 %d 笔、年度持仓基线 %d 项",
+                len(disclosure_data.get("filings", [])),
+                len(disclosure_data.get("transactions", [])),
+                len(disclosure_data.get("holdings", [])),
+            )
+
             # 2. 保存新闻和市场缓存
             logger.info("步骤 2/5: 保存新闻缓存...")
             self.storage.save_news_cache(articles)
-            self.storage.save_market_cache(market_data, sentiment_data)
+            self.storage.save_market_cache(
+                market_data, sentiment_data, disclosure_data
+            )
 
             # 2.5 加载配置的历史新闻窗口（用于黑天鹅对比分析）
             history_days = self.config.get("storage", {}).get("historical_news_days", 5)
@@ -134,6 +150,7 @@ class NewsAnalyzerApp:
                 market_data=market_data,
                 sentiment_data=sentiment_data,
                 macro_data=macro_data,
+                disclosure_data=disclosure_data,
             )
             
             if not analysis_result or not analysis_result.get('analysis'):

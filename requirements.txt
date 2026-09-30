@@ -21,6 +21,8 @@ pytz>=2023.3
 
 # 数据处理
 python-dateutil>=2.8.2
+pdfplumber>=0.11.10
+pyobjc-framework-Vision>=12.2.2; platform_system == "Darwin"
 
 # HTTP客户端增强
 urllib3>=2.0.0

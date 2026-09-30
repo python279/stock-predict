@@ -43,6 +43,7 @@ gdelt:
     - "(semiconductor OR chip OR AI OR memory OR storage)"
     - "(bank OR credit OR liquidity OR consumer OR retail)"
     - "(US election OR White House OR Congress OR foreign policy OR Middle East)"
+    - "(Trump AND (\"financial disclosure\" OR \"stock trades\" OR \"278-T\"))"
   trusted_domains:
     - "reuters.com"
     - "bbc.com"
@@ -65,6 +66,7 @@ google_news:
     - "semiconductor AI memory storage"
     - "banking credit consumer retail"
     - "US election White House Congress Middle East foreign policy"
+    - "Trump financial disclosure stock trades 278-T"
     - "site:imf.org/en/News/Articles IMF"
   trusted_sources:
     - "Reuters"
@@ -86,6 +88,45 @@ imf_archive:
   region: "international"
   priority: 5
   sectors: ["finance", "policy"]
+
+# 特朗普公开财务披露。仅用于个人研究/新闻分析，不得用于信贷、募资或其他法律禁止用途。
+# 278-T 是有阈值、延迟和豁免的已报告交易；年度 278e 也不是完整投资组合。
+oge_disclosure:
+  enabled: true
+  api_url: "https://extapps2.oge.gov/201/Presiden.nsf/API.xsp/v2/rest"
+  subject_names: ["Trump, Donald J", "Donald J. Trump"]
+  lookback_days: 180
+  index_scan_limit: 2000
+  max_filings: 12
+  max_transactions: 3000
+  max_holdings: 500
+  max_pdf_pages: 500
+  extract_pdf_tables: false
+  ocr_enabled: true
+  ocr_resolution: 200
+  ocr_max_pages_per_filing: 150
+  ocr_min_text_chars: 80
+  ocr_try_rotate_180: true
+  cache_extracted_pages: true
+  max_prompt_transactions: 25
+  max_prompt_holdings: 15
+  max_background_articles: 6
+  pdf_cache_dir: "data/oge_pdf_cache"
+  timeout_seconds: 30
+  retry_attempts: 2
+  retry_delay_seconds: 3
+  known_filing_urls: []
+  trusted_background_sources:
+    - "Reuters"
+    - "Associated Press"
+    - "CNBC"
+    - "Financial Times"
+    - "BBC"
+  background_news_keywords:
+    - "278-T"
+    - "financial disclosure"
+    - "stock trade"
+    - "securities trade"
 
 # RSS Feed配置
 rss_feeds:
