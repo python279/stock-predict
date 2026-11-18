@@ -341,6 +341,181 @@ class MacroFetcherTest(unittest.TestCase):
         self.assertTrue(any("U.S. Treasury Debt" in error for error in result["errors"]))
         self.assertTrue(any("PBOC M2" in error for error in result["errors"]))
 
+    def test_fred_series_parses_csv_and_skips_missing_values(self):
+        from macro_fetcher import MacroFetcher
+
+        fetcher = MacroFetcher(
+            {
+                "macro": {
+                    "enabled": True,
+                    "bls_cpi_enabled": False,
+                    "treasury_debt_enabled": False,
+                    "pboc_m2_enabled": False,
+                    "fred_series": [{"id": "DFII10", "name": "10年期实际利率"}],
+                    "market_proxies": [],
+                }
+            }
+        )
+        lines = ["observation_date,DFII10"]
+        lines += [f"2026-08-{day:02d},{2.0 + day * 0.01:.2f}" for day in range(1, 25)]
+        lines.insert(5, "2026-08-04b,.")
+        fetcher._request_text = Mock(return_value="\n".join(lines))
+
+        result = fetcher.fetch_all_macro()
+
+        item = result["items"][0]
+        self.assertEqual(item["symbol"], "DFII10")
+        self.assertEqual(item["value"], 2.24)
+        self.assertEqual(item["value_date"], "2026-08-24")
+        self.assertEqual(item["change_20d_pts"], 0.2)
+        self.assertTrue(item["is_official"])
+
+    def test_fred_failure_is_recorded_without_stopping(self):
+        from macro_fetcher import MacroFetcher
+
+        fetcher = MacroFetcher(
+            {
+                "macro": {
+                    "enabled": True,
+                    "bls_cpi_enabled": False,
+                    "treasury_debt_enabled": False,
+                    "pboc_m2_enabled": False,
+                    "fred_series": [{"id": "DFII10", "name": "10年期实际利率"}],
+                    "market_proxies": [],
+                }
+            }
+        )
+        fetcher._request_text = Mock(side_effect=RuntimeError("HTTP 429"))
+
+        result = fetcher.fetch_all_macro()
+
+        self.assertEqual(result["items"], [])
+        self.assertTrue(any("10年期实际利率" in error for error in result["errors"]))
+
+
+class CommodityOverheatTest(unittest.TestCase):
+    def _fetcher(self):
+        from commodity_fetcher import CommodityFetcher
+
+        return CommodityFetcher({"commodities": {"enabled": True}})
+
+    def test_parabolic_rally_is_flagged_overheated(self):
+        fetcher = self._fetcher()
+        closes = [100.0] * 60 + [100 * 1.01 ** step for step in range(1, 21)]
+        rows = [{"date": f"d{index}", "close": close} for index, close in enumerate(closes)]
+        fetcher._fetch_daily_rows = Mock(return_value=rows)
+
+        item = fetcher._fetch_yahoo_asset({"symbol": "GC=F", "name": "黄金"})
+
+        self.assertGreater(item.rsi14, 70)
+        self.assertGreater(item.ma60_deviation_pct, 8)
+        self.assertEqual(item.overheat_signal, "过热")
+        self.assertEqual(item.trend_signal, "上升趋势")
+
+    def test_flat_prices_are_normal(self):
+        fetcher = self._fetcher()
+        closes = [100 + (index % 2) for index in range(80)]
+        rows = [{"date": f"d{index}", "close": close} for index, close in enumerate(closes)]
+        fetcher._fetch_daily_rows = Mock(return_value=rows)
+
+        item = fetcher._fetch_yahoo_asset({"symbol": "GC=F"})
+
+        self.assertEqual(item.overheat_signal, "正常")
+
+
+class GoldSignalsTest(unittest.TestCase):
+    @staticmethod
+    def _gold(**overrides):
+        item = {
+            "symbol": "GC=F",
+            "price": 4700,
+            "price_date": "2026-08-25",
+            "change_20d_pct": 16.5,
+            "ma60": 4200,
+            "ma60_deviation_pct": 11.9,
+            "rsi14": 78,
+            "trend_signal": "上升趋势",
+            "overheat_signal": "过热",
+        }
+        item.update(overrides)
+        return {"items": [item]}
+
+    @staticmethod
+    def _macro(real=0.0, nominal=0.0, policy=0.0, dxy=0.0, tip=0.0):
+        return {
+            "items": [
+                {"symbol": "DFII10", "value": 2.5, "change_20d_pts": real},
+                {"symbol": "^TNX", "value": 4.8, "change_20d_pts": nominal},
+                {"symbol": "ZQ=F", "value": 3.9, "change_20d_pts": policy},
+                {"symbol": "DX-Y.NYB", "value": 100, "change_20d_pct": dxy},
+                {"symbol": "TIP", "value": 106, "change_20d_pct": tip},
+            ]
+        }
+
+    def test_overheated_gold_with_rising_real_rates_is_high(self):
+        from gold_signals import evaluate_gold_signals
+
+        result = evaluate_gold_signals(
+            self._gold(), self._macro(real=0.3, policy=0.2, tip=-1.5)
+        )
+
+        self.assertEqual(result["level"], "高")
+        self.assertEqual(len(result["headwinds"]), 3)
+
+    def test_overheat_without_driver_headwind_is_medium(self):
+        from gold_signals import evaluate_gold_signals
+
+        result = evaluate_gold_signals(self._gold(), self._macro())
+
+        self.assertEqual(result["level"], "中")
+        self.assertIn("过热", result["reason"])
+
+    def test_legacy_snapshot_without_overheat_field_is_derived(self):
+        from gold_signals import evaluate_gold_signals
+
+        result = evaluate_gold_signals(
+            self._gold(overheat_signal=None, ma60_deviation_pct=None, rsi14=None),
+            self._macro(),
+        )
+
+        self.assertEqual(result["gold"]["overheat_signal"], "过热")
+        self.assertEqual(result["level"], "中")
+
+    def test_falling_rates_and_dollar_are_tailwinds_and_low(self):
+        from gold_signals import evaluate_gold_signals
+
+        result = evaluate_gold_signals(
+            self._gold(
+                change_20d_pct=2, ma60_deviation_pct=1, rsi14=55, overheat_signal="正常"
+            ),
+            self._macro(real=-0.3, dxy=-2.5),
+        )
+
+        self.assertEqual(result["level"], "低")
+        self.assertEqual(len(result["tailwinds"]), 2)
+
+    def test_missing_inputs_are_reported(self):
+        from gold_signals import evaluate_gold_signals
+
+        result = evaluate_gold_signals(None, {"items": []})
+
+        self.assertEqual(result["level"], "数据缺失")
+        self.assertIn("10年期实际利率", result["missing"])
+
+    def test_prompt_includes_gold_block_and_multi_period_macro(self):
+        analyzer = LLMAnalyzer.__new__(LLMAnalyzer)
+        analyzer.config = {}
+        block = analyzer._format_gold_signals(
+            __import__("gold_signals").evaluate_gold_signals(
+                self._gold(), self._macro(real=0.3, policy=0.2)
+            )
+        )
+
+        self.assertIn("【黄金脆弱性信号", block)
+        self.assertIn("脆弱性等级：**高**", block)
+        self.assertIn("| 10年期实际利率 |", block)
+        self.assertNotIn("\n- ", block)
+
 
 class OgeDisclosureFetcherTest(unittest.TestCase):
     def _config(self, directory=None):
@@ -922,6 +1097,9 @@ class IndustryReportPromptTest(unittest.TestCase):
         prompt = analyzer._build_system_prompt()
 
         self.assertIn("固定 7 个", prompt)
+        self.assertIn("必须同时写出多头与空头理由", prompt)
+        self.assertIn("不得建议追涨加仓", prompt)
+        self.assertIn("【黄金脆弱性信号】，黄金必须单独占一行", prompt)
         self.assertIn("A股：行业趋势与科技急跌预警", prompt)
         self.assertIn("美股：行业与风险偏好", prompt)
         self.assertIn("科技急跌风险监测", prompt)

@@ -9,6 +9,8 @@ from datetime import datetime
 import json
 import re
 
+from gold_signals import evaluate_gold_signals
+
 logger = logging.getLogger(__name__)
 
 _REPORT_ICON_PATTERN = re.compile(
@@ -287,10 +289,11 @@ class LLMAnalyzer:
                 "供需关系、美元利率和地缘政治进行预测，不要只机械外推价格。"
             )
             summary_parts.append(
-                "\n| 品种 | 价格日期 | 当前价 | 1日涨跌 | 5日涨跌 | 20日涨跌 | MA5 | MA20 | MA60 | 趋势信号 | 可投资标的 |"
+                "\n| 品种 | 价格日期 | 当前价 | 1日涨跌 | 5日涨跌 | 20日涨跌 | MA5 | MA20 | MA60 | 趋势信号 | "
+                "RSI14 | 偏离MA60 | 过热信号 | 可投资标的 |"
             )
             summary_parts.append(
-                "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"
+                "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"
             )
 
             for item in commodity_data.get('items', []):
@@ -299,7 +302,8 @@ class LLMAnalyzer:
                 )
                 summary_parts.append(
                     "| {name} | {date} | {price} {unit} | {chg1} | {chg5} | "
-                    "{chg20} | {ma5} | {ma20} | {ma60} | {signal} | {targets} |".format(
+                    "{chg20} | {ma5} | {ma20} | {ma60} | {signal} | {rsi} | "
+                    "{deviation} | {overheat} | {targets} |".format(
                         name=item.get('name', ''),
                         date=item.get('price_date', ''),
                         price=self._format_number(item.get('price')),
@@ -311,6 +315,9 @@ class LLMAnalyzer:
                         ma20=self._format_number(item.get('ma20')),
                         ma60=self._format_number(item.get('ma60')),
                         signal=item.get('trend_signal', '未知'),
+                        rsi=self._format_number(item.get('rsi14')),
+                        deviation=self._format_pct(item.get('ma60_deviation_pct')),
+                        overheat=item.get('overheat_signal') or '数据不足',
                         targets=targets,
                     )
                 )
@@ -334,7 +341,7 @@ class LLMAnalyzer:
             )
             if macro_data.get('items'):
                 summary_parts.append(
-                    "\n| 指标 | 类别 | 数据日期 | 数值 | 单位 | 短期变化 | 同比/1年 | 5年CAGR | 来源 | 说明 |"
+                    "\n| 指标 | 类别 | 数据日期 | 数值 | 单位 | 1日；5日；20日变化 | 同比/1年 | 5年CAGR | 来源 | 说明 |"
                 )
                 summary_parts.append(
                     "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"
@@ -348,7 +355,10 @@ class LLMAnalyzer:
                             date=item.get('value_date', ''),
                             value=self._format_number(item.get('value')),
                             unit=item.get('unit', ''),
-                            short_change=self._format_macro_change(item, 1),
+                            short_change="；".join(
+                                self._format_macro_change(item, periods)
+                                for periods in (1, 5, 20)
+                            ),
                             annual_change=self._format_macro_annual_change(item),
                             cagr5=self._format_pct(item.get('cagr_5y_pct')),
                             source=item.get('source', ''),
@@ -360,6 +370,14 @@ class LLMAnalyzer:
                     "\n> 部分宏观数据抓取失败或未采集："
                     + "；".join(macro_data.get('errors', [])[:5])
                 )
+
+        # ── 黄金脆弱性信号（过热 × 利率/美元背离）──────────────────
+        gold_config = getattr(self, 'config', {}).get('gold_signals', {})
+        if gold_config.get('enabled', True) and (commodity_data or macro_data):
+            gold_signals = evaluate_gold_signals(
+                commodity_data, macro_data, gold_config
+            )
+            summary_parts.append(self._format_gold_signals(gold_signals))
 
         # ── 特朗普 OGE 官方交易与年度持仓披露 ──────────────────────
         if disclosure_data and any(
@@ -594,6 +612,61 @@ class LLMAnalyzer:
             return f"{float(value):.2f}"
         except (TypeError, ValueError):
             return str(value)
+
+    @classmethod
+    def _format_gold_signals(cls, signals: Dict[str, Any]) -> str:
+        """把黄金脆弱性信号格式化为输入块。"""
+        lines = [
+            "\n\n# 【黄金脆弱性信号：过热 × 利率/美元背离】",
+            "> 程序规则计算的情景预警，不是价格预测。黄金定价核心是实际利率、美元与政策利率预期；"
+            "地缘避险只能作为辅助理由，不能单独支撑加仓结论。",
+        ]
+        gold = signals.get('gold')
+        if gold:
+            lines.append(
+                "\n黄金（{symbol}，{date}）：价格 {price}；20日 {chg20}；偏离MA60 {dev}；"
+                "RSI14 {rsi}；趋势 {trend}；过热信号 {overheat}。".format(
+                    symbol=signals.get('gold_symbol'),
+                    date=gold.get('price_date') or '未知',
+                    price=cls._format_number(gold.get('price')),
+                    chg20=cls._format_pct(gold.get('change_20d_pct')),
+                    dev=cls._format_pct(gold.get('ma60_deviation_pct')),
+                    rsi=cls._format_number(gold.get('rsi14')),
+                    trend=gold.get('trend_signal') or '未知',
+                    overheat=gold.get('overheat_signal') or '数据不足',
+                )
+            )
+        else:
+            lines.append("\n黄金行情：数据缺失/未采集。")
+        if signals.get('drivers'):
+            lines.append("\n| 驱动 | 数据日期 | 最新值 | 5日变化 | 20日变化 | 对黄金 |")
+            lines.append("| --- | --- | --- | --- | --- | --- |")
+            for driver in signals['drivers']:
+                unit = driver.get('unit', '')
+                fmt = lambda value: (
+                    'N/A' if value is None else f"{float(value):+.2f}{unit}"
+                )
+                lines.append(
+                    "| {name} | {date} | {value} | {chg5} | {chg20} | {stance} |".format(
+                        name=driver.get('name'),
+                        date=driver.get('value_date') or '未知',
+                        value=cls._format_number(driver.get('value')),
+                        chg5=fmt(driver.get('change_5d')),
+                        chg20=fmt(driver.get('change_20d')),
+                        stance=driver.get('stance'),
+                    )
+                )
+        lines.append(
+            "\n脆弱性等级：**{level}**；依据：{reason}。".format(
+                level=signals.get('level', '数据缺失'),
+                reason=signals.get('reason', ''),
+            )
+        )
+        if signals.get('headwinds'):
+            lines.append("逆风项：" + "；".join(signals['headwinds']) + "。")
+        if signals.get('tailwinds'):
+            lines.append("顺风项：" + "；".join(signals['tailwinds']) + "。")
+        return "\n".join(lines)
 
     @staticmethod
     def _format_macro_change(item: Dict[str, Any], periods: int) -> str:
@@ -1116,6 +1189,8 @@ class LLMAnalyzer:
 - OGE 278-T/278e 是特朗普交易与持仓结论的唯一一级证据；媒体报道仅作背景。禁止把金额区间改写成精确金额、把已报告交易写成完整/实时持仓，或把第三方裁量交易写成特朗普本人下令。
 - 黑天鹅只能做情景预警，不能声称可以确定预测；区分“已发生事实”“预警信号”“推演”。
 - 不承诺收益，不虚构估值、资金流、政策或历史类比；杠杆、期权和期货仅作高风险工具提示。
+- 对任一资产给出方向或加减仓倾向时，必须同时写出多头与空头理由，并给出可量化的反转/失效阈值（如价格跌破MA20/MA60、利率或美元20日变化超过某幅度）；不得仅凭单一叙事（如地缘避险）给出加仓结论。
+- 输入标注“过热”“偏热”或脆弱性等级“中/高”的资产，不得建议追涨加仓；只能给出持有、分批减仓、收紧止损或等待回撤等条件式操作。
 - 同一新闻/事件只在最相关章节完整解释一次，其他章节仅交叉引用章节编号，禁止重复复述。
 
 ## 格式与篇幅（严格遵守）
@@ -1156,6 +1231,8 @@ class LLMAnalyzer:
 - 分析美债时区分债务总额、公众持有和政府内部持有，结合利息负担、期限溢价与美元信用；未采集债务/GDP或利息支出时不得推测具体比例。
 - 分析中国M2时区分“货币规模扩张”与“信用有效需求/资金进入资产市场”，结合通胀、房地产、财政和汇率；不得把M2同比直接写成股市涨幅。
 - 使用一张表：`变量 | 数据日期/趋势 | 核心驱动 | 对股市行业的传导 | 失效信号`。
+- 若提供【黄金脆弱性信号】，黄金必须单独占一行：数据日期/趋势写明偏离MA60、RSI14与脆弱性等级；核心驱动写成“多：…；空：…”，空方须引用实际利率、名义利率、政策利率预期、美元的20日变化；失效信号写出具体数值阈值。等级为“高”时同时列入第 2 章风险表，并在第 1 章给出对黄金的减仓或止损条件。
+- 其他商品若标注“过热/超卖”，在同一张表说明均值回归风险，不得只外推趋势。
 - 不另列商品标的清单；与各市场的具体行业建议仅在第 4–6 章出现。
 
 {a_share_section}
@@ -1214,7 +1291,7 @@ class LLMAnalyzer:
 
 ---
 
-请严格按照报告结构逐章输出分析，不要省略任何章节或固定子节。**全程使用 Markdown 格式**，表格用 `| 列 |` 语法，重点用 `**粗体**`，列表前后留空行。第2.2节必须展示特朗普OGE官方交易与年度持仓基线；即使明细未可靠解析，也必须说明文件状态和缺失原因。第3章应整合大宗商品、财政、货币与利率的跨资产传导，第4至6章给出相关投资工具和风控条件。若提供【特朗普 OGE 官方财务披露】，第2.1、第2.2和第5章只能以OGE字段认定交易/持仓，可信媒体仅辅助解释，不得补造ticker、金额或本人决策。{long_term_instruction}市场和行业章节必须标注所引用数据的日期、缺失项与失效条件。"""
+请严格按照报告结构逐章输出分析，不要省略任何章节或固定子节。**全程使用 Markdown 格式**，表格用 `| 列 |` 语法，重点用 `**粗体**`，列表前后留空行。第2.2节必须展示特朗普OGE官方交易与年度持仓基线；即使明细未可靠解析，也必须说明文件状态和缺失原因。第3章应整合大宗商品、财政、货币与利率的跨资产传导；若提供【黄金脆弱性信号】，黄金判断必须多空并列并引用利率/美元20日变化，过热或等级中/高时不得建议追涨。第4至6章给出相关投资工具和风控条件。若提供【特朗普 OGE 官方财务披露】，第2.1、第2.2和第5章只能以OGE字段认定交易/持仓，可信媒体仅辅助解释，不得补造ticker、金额或本人决策。{long_term_instruction}市场和行业章节必须标注所引用数据的日期、缺失项与失效条件。"""
     
     def _call_llm(self, system_prompt: str, user_prompt: str) -> str:
         """

@@ -33,6 +33,9 @@ class CommodityData:
     ma60: Optional[float]
     trend_signal: str
     investment_targets: Dict[str, List[str]]
+    rsi14: Optional[float] = None
+    ma60_deviation_pct: Optional[float] = None
+    overheat_signal: str = "数据不足"
 
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典，便于存储和传给 LLM。"""
@@ -51,6 +54,9 @@ class CommodityData:
             "ma20": self.ma20,
             "ma60": self.ma60,
             "trend_signal": self.trend_signal,
+            "rsi14": self.rsi14,
+            "ma60_deviation_pct": self.ma60_deviation_pct,
+            "overheat_signal": self.overheat_signal,
             "investment_targets": self.investment_targets,
         }
 
@@ -86,6 +92,15 @@ class CommodityFetcher:
         )
         self.historical_days = self.commodity_config.get("historical_days", 90)
         self.source = self.commodity_config.get("provider", "yahoo")
+        overheat_config = self.commodity_config.get("overheat", {})
+        self.overheat_change_20d_pct = float(
+            overheat_config.get("change_20d_pct", 10)
+        )
+        self.overheat_ma60_deviation_pct = float(
+            overheat_config.get("ma60_deviation_pct", 8)
+        )
+        self.rsi_overbought = float(overheat_config.get("rsi_overbought", 70))
+        self.rsi_oversold = float(overheat_config.get("rsi_oversold", 30))
 
         user_agent = fetcher_config.get("user_agent", "NewsAnalyzer/1.0")
         self.session = requests.Session()
@@ -149,6 +164,12 @@ class CommodityFetcher:
 
         latest = rows[-1]
         price = latest.get("close")
+        change_20d = self._pct_change(closes, 20)
+        ma60 = self._moving_average(closes, 60)
+        rsi14 = self._rsi(closes, 14)
+        ma60_deviation = (
+            round((closes[-1] / ma60 - 1) * 100, 2) if ma60 else None
+        )
 
         return CommodityData(
             name=asset.get("name", symbol),
@@ -160,12 +181,17 @@ class CommodityFetcher:
             price_date=latest.get("date", ""),
             change_1d_pct=self._pct_change(closes, 1),
             change_5d_pct=self._pct_change(closes, 5),
-            change_20d_pct=self._pct_change(closes, 20),
+            change_20d_pct=change_20d,
             ma5=self._moving_average(closes, 5),
             ma20=self._moving_average(closes, 20),
-            ma60=self._moving_average(closes, 60),
+            ma60=ma60,
             trend_signal=self._trend_signal(closes),
             investment_targets=asset.get("investment_targets", {}),
+            rsi14=rsi14,
+            ma60_deviation_pct=ma60_deviation,
+            overheat_signal=self._overheat_signal(
+                change_20d, ma60_deviation, rsi14
+            ),
         )
 
     def _fetch_daily_rows(self, symbol: str) -> List[Dict[str, Any]]:
@@ -292,3 +318,47 @@ class CommodityFetcher:
         if ma5 is not None and latest < ma5 < ma20:
             return "短期转弱"
         return "震荡"
+
+    @staticmethod
+    def _rsi(values: List[float], window: int = 14) -> Optional[float]:
+        """Wilder RSI；样本不足时返回 None。"""
+        if len(values) <= window:
+            return None
+        deltas = [values[i] - values[i - 1] for i in range(1, len(values))]
+        avg_gain = sum(max(d, 0) for d in deltas[:window]) / window
+        avg_loss = sum(max(-d, 0) for d in deltas[:window]) / window
+        for delta in deltas[window:]:
+            avg_gain = (avg_gain * (window - 1) + max(delta, 0)) / window
+            avg_loss = (avg_loss * (window - 1) + max(-delta, 0)) / window
+        if avg_loss == 0:
+            return 100.0
+        return round(100 - 100 / (1 + avg_gain / avg_loss), 1)
+
+    def _overheat_signal(
+        self,
+        change_20d: Optional[float],
+        ma60_deviation: Optional[float],
+        rsi14: Optional[float],
+    ) -> str:
+        """价格偏离与动量极值标签；只提示回撤脆弱性，不是反转预测。"""
+        if change_20d is None or ma60_deviation is None:
+            return "数据不足"
+        hot = [
+            change_20d >= self.overheat_change_20d_pct,
+            ma60_deviation >= self.overheat_ma60_deviation_pct,
+            rsi14 is not None and rsi14 >= self.rsi_overbought,
+        ]
+        cold = [
+            change_20d <= -self.overheat_change_20d_pct,
+            ma60_deviation <= -self.overheat_ma60_deviation_pct,
+            rsi14 is not None and rsi14 <= self.rsi_oversold,
+        ]
+        if sum(hot) >= 2:
+            return "过热"
+        if sum(cold) >= 2:
+            return "超卖"
+        if any(hot):
+            return "偏热"
+        if any(cold):
+            return "偏冷"
+        return "正常"

@@ -401,7 +401,19 @@ macro:
   pboc_m2_enabled: true
   pboc_m2_index_url: "https://www.pbc.gov.cn/goutongjiaoliu/113456/113469/index.html"
   pboc_report_limit: 4
+  # FRED 公开 CSV，无需 API Key；DFII10 为10年期TIPS实际收益率
+  fred_series:
+    - id: "DFII10"
+      name: "10年期实际利率(TIPS)"
+      category: "rates"
+      unit: "%"
+      interpretation: "实际利率上升通常压制黄金与长久期成长股；官方统计，通常滞后1个交易日"
   market_proxies:
+    - name: "美元指数"
+      symbol: "DX-Y.NYB"
+      category: "fx"
+      unit: "pt"
+      interpretation: "美元走强通常压制黄金与大宗商品，收紧全球美元流动性"
     - name: "联邦基金期货隐含利率"
       symbol: "ZQ=F"
       category: "policy_expectation"
@@ -423,6 +435,20 @@ macro:
       category: "inflation"
       unit: "USD"
       interpretation: "TIPS市场价格走势；是通胀/实际利率综合定价代理，不是官方CPI同比"
+
+# 黄金脆弱性信号：金价过热/高位 × 实际利率、名义利率、政策利率预期、美元、TIP 的20日逆风
+gold_signals:
+  enabled: true
+  gold_symbol: "GC=F"
+  thresholds:
+    real_yield_20d_pts: 0.15
+    nominal_yield_20d_pts: 0.20
+    policy_rate_20d_pts: 0.15
+    dxy_20d_pct: 2.0
+    tip_20d_pct: 1.0
+    elevated_ma60_deviation_pct: 5.0
+    overheat_change_20d_pct: 10.0
+    overheat_ma60_deviation_pct: 8.0
 
 # 默认用权威新闻与市场相对强弱生成行业情绪摘要。
 # 股吧抓取为可选功能，请确认数据源条款后才启用并配置代码。

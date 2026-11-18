@@ -33,6 +33,7 @@ class MacroFetcher:
     PBOC_REPORT_INDEX_URL = (
         "https://www.pbc.gov.cn/goutongjiaoliu/113456/113469/index.html"
     )
+    FRED_CSV_URL = "https://fred.stlouisfed.org/graph/fredgraph.csv"
 
     def __init__(self, config: Dict[str, Any]):
         self.config = config
@@ -95,6 +96,18 @@ class MacroFetcher:
             except Exception as exc:
                 logger.warning("抓取中国人民银行 M2 数据失败: %s", exc)
                 result["errors"].append(f"PBOC M2: {exc}")
+
+        for series in self.macro_config.get("fred_series", []):
+            name = series.get("name", series.get("id", "unknown"))
+            try:
+                item = self._fetch_fred_series(series)
+                if item:
+                    result["items"].append(item)
+                else:
+                    result["errors"].append(f"{name}: 数据缺失/未采集")
+            except Exception as exc:
+                logger.warning("抓取 FRED 序列失败 %s: %s", name, exc)
+                result["errors"].append(f"{name}: {exc}")
 
         for asset in self.macro_config.get("market_proxies", []):
             try:
@@ -499,6 +512,47 @@ class MacroFetcher:
             "interpretation": interpretation,
             "is_official": False,
             "is_proxy": True,
+        }
+
+    def _fetch_fred_series(self, series: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """抓取 FRED 公开 CSV（无需密钥）；缺失值 "." 跳过。"""
+        series_id = series.get("id", "")
+        if not series_id:
+            return None
+        start = (
+            datetime.now(timezone.utc).date()
+            - timedelta(days=max(int(self.historical_days) * 2, 120))
+        ).isoformat()
+        base_url = self.macro_config.get("fred_csv_url", self.FRED_CSV_URL)
+        text = self._request_text(
+            f"{base_url}?id={quote(series_id, safe='')}&cosd={start}"
+        )
+        rows: List[tuple] = []
+        for line in text.splitlines()[1:]:
+            parts = line.strip().split(",")
+            if len(parts) != 2:
+                continue
+            value = self._to_float(parts[1])
+            if value is None:
+                continue
+            rows.append((parts[0], value))
+        if not rows:
+            return None
+        values = [value for _, value in rows]
+        return {
+            "name": series.get("name", series_id),
+            "symbol": series_id,
+            "category": series.get("category", "rates"),
+            "unit": series.get("unit", "%"),
+            "source": "FRED (Federal Reserve Bank of St. Louis)",
+            "value": values[-1],
+            "value_date": rows[-1][0],
+            "change_1d_pts": self._point_change(values, 1),
+            "change_5d_pts": self._point_change(values, 5),
+            "change_20d_pts": self._point_change(values, 20),
+            "interpretation": series.get("interpretation", ""),
+            "is_official": True,
+            "is_proxy": False,
         }
 
     def _fetch_yahoo_rows(self, symbol: str) -> List[Dict[str, Any]]:
